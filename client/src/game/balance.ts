@@ -77,9 +77,9 @@ export const DEFAULT_BALANCE: BalanceConfig = {
       radius: 28,
       max_per_player: 1,
       levels: [
-        { cost: 0, trophy_cost: 0, energy_cap: 400, trophy_cap: 200, hp: 1800, income_per_sec: 3.0, unit_cap_bonus: 6 },
-        { cost: 0, trophy_cost: 85, energy_cap: 950, trophy_cap: 420, hp: 3200, income_per_sec: 5.0, unit_cap_bonus: 14 },
-        { cost: 0, trophy_cost: 320, energy_cap: 2000, trophy_cap: 600, hp: 3800, income_per_sec: 8.0, unit_cap_bonus: 24 },
+        { cost: 0, trophy_cost: 0, energy_cap: 400, trophy_cap: 200, hp: 1800, income_per_sec: 3.0, unit_cap_bonus: 0 },
+        { cost: 0, trophy_cost: 85, energy_cap: 950, trophy_cap: 420, hp: 3200, income_per_sec: 5.0, unit_cap_bonus: 0 },
+        { cost: 0, trophy_cost: 320, energy_cap: 2000, trophy_cap: 600, hp: 3800, income_per_sec: 8.0, unit_cap_bonus: 0 },
       ],
     },
     generator: {
@@ -108,9 +108,9 @@ export const DEFAULT_BALANCE: BalanceConfig = {
       name: "Дроны",
       radius: 28,
       levels: [
-        { cost: 90, trophy_cost: 0, hp: 420, spawn_interval_sec: 4.2, unit_cap_bonus: 1, local_supply_cap: 3 },
-        { cost: 210, trophy_cost: 0, hp: 700, spawn_interval_sec: 3.4, unit_cap_bonus: 2, local_supply_cap: 4 },
-        { cost: 450, trophy_cost: 0, hp: 1100, spawn_interval_sec: 2.6, unit_cap_bonus: 3, local_supply_cap: 6 },
+        { cost: 90, trophy_cost: 0, hp: 420, spawn_interval_sec: 4.2, unit_cap_bonus: 3 },
+        { cost: 210, trophy_cost: 0, hp: 700, spawn_interval_sec: 3.4, unit_cap_bonus: 4 },
+        { cost: 450, trophy_cost: 0, hp: 1100, spawn_interval_sec: 2.6, unit_cap_bonus: 6 },
       ],
     },
     beacon: {

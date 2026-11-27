@@ -356,61 +356,49 @@ impl World {
                     _ => (0_u8, raider.hp, raider.cost, raider.supply_cost, 1.0_f32),
                 };
 
-                let local_cap = if lvl.local_supply_cap > 0 {
-                    lvl.local_supply_cap
-                } else {
-                    match b.level {
-                        1 => 3,
-                        2 => 4,
-                        _ => 6,
-                    }
-                };
                 let cur_global = player_supply.get(&b.owner_id).copied().unwrap_or(0);
-                let cur_local = barrack_supply.get(&b.id).copied().unwrap_or(0);
 
-                if cur_local + u_sup <= local_cap {
-                    if let Some(p) = players.get_mut(&b.owner_id) {
-                        if cur_global + u_sup <= p.unit_cap && p.energy >= u_cost {
-                            if let Some(zone) = zones.get(&b.owner_id) {
-                                let angle = rng.gen_range(0.0..TAU);
-                                let offset = barrack_cfg.radius + 14.0;
-                                let ux = zone.x + b.rel_x + angle.cos() * offset;
-                                let uy = zone.y + b.rel_y + angle.sin() * offset;
-                                let max_hp = raw_hp.round() as u16;
-                                let spawn_squad = p
-                                    .reinforce_squad
-                                    .filter(|sid| p.squads.contains_key(sid))
-                                    .unwrap_or(0);
-                                spawned_units.push(Unit {
-                                    id: 0,
-                                    owner_id: b.owner_id,
-                                    kind: ukind,
-                                    squad: spawn_squad,
-                                    x: ux,
-                                    y: uy,
-                                    vx: 0.0,
-                                    vy: 0.0,
-                                    hp: max_hp,
-                                    max_hp,
-                                    attack_cooldown_left: 0.0,
-                                    last_hit_by: None,
-                                    last_hit_src: SRC_UNKNOWN,
-                                    rad_accum: 0.0,
-                                    in_lower_ring_sec: 0.0,
-                                    regen_accum: 0.0,
-                                    home_id: b.id,
-                                    knockback_vx: 0.0,
-                                    knockback_vy: 0.0,
-                                    target_id: 0,
-                                    target_idx: 0,
-                                    target_is_building: false,
-                                });
-                                *player_supply.entry(b.owner_id).or_insert(0) += u_sup;
-                                *barrack_supply.entry(b.id).or_insert(0) += u_sup;
-                                p.energy -= u_cost;
-                                b.cooldown_left = lvl.spawn_interval_sec * cd_mult;
-                                continue;
-                            }
+                if let Some(p) = players.get_mut(&b.owner_id) {
+                    if cur_global + u_sup <= p.unit_cap && p.energy >= u_cost {
+                        if let Some(zone) = zones.get(&b.owner_id) {
+                            let angle = rng.gen_range(0.0..TAU);
+                            let offset = barrack_cfg.radius + 14.0;
+                            let ux = zone.x + b.rel_x + angle.cos() * offset;
+                            let uy = zone.y + b.rel_y + angle.sin() * offset;
+                            let max_hp = raw_hp.round() as u16;
+                            let spawn_squad = p
+                                .reinforce_squad
+                                .filter(|sid| p.squads.contains_key(sid))
+                                .unwrap_or(0);
+                            spawned_units.push(Unit {
+                                id: 0,
+                                owner_id: b.owner_id,
+                                kind: ukind,
+                                squad: spawn_squad,
+                                x: ux,
+                                y: uy,
+                                vx: 0.0,
+                                vy: 0.0,
+                                hp: max_hp,
+                                max_hp,
+                                attack_cooldown_left: 0.0,
+                                last_hit_by: None,
+                                last_hit_src: SRC_UNKNOWN,
+                                rad_accum: 0.0,
+                                in_lower_ring_sec: 0.0,
+                                regen_accum: 0.0,
+                                home_id: b.id,
+                                knockback_vx: 0.0,
+                                knockback_vy: 0.0,
+                                target_id: 0,
+                                target_idx: 0,
+                                target_is_building: false,
+                            });
+                            *player_supply.entry(b.owner_id).or_insert(0) += u_sup;
+                            *barrack_supply.entry(b.id).or_insert(0) += u_sup;
+                            p.energy -= u_cost;
+                            b.cooldown_left = lvl.spawn_interval_sec * cd_mult;
+                            continue;
                         }
                     }
                 }

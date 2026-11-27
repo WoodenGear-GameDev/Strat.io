@@ -34,7 +34,7 @@
           "range": 0.0,
           "projectile_speed": 0.0,
           "spawn_interval_sec": 0.0,
-          "unit_cap_bonus": 6
+          "unit_cap_bonus": 0
         },
         {
           "cost": 0.0,
@@ -48,7 +48,7 @@
           "range": 0.0,
           "projectile_speed": 0.0,
           "spawn_interval_sec": 0.0,
-          "unit_cap_bonus": 14
+          "unit_cap_bonus": 0
         },
         {
           "cost": 0.0,
@@ -62,7 +62,7 @@
           "range": 0.0,
           "projectile_speed": 0.0,
           "spawn_interval_sec": 0.0,
-          "unit_cap_bonus": 24
+          "unit_cap_bonus": 0
         }
       ],
       "effects": {}
@@ -173,8 +173,7 @@
           "range": 0.0,
           "projectile_speed": 0.0,
           "spawn_interval_sec": 4.2,
-          "unit_cap_bonus": 1,
-          "local_supply_cap": 3
+          "unit_cap_bonus": 3
         },
         {
           "cost": 210.0,
@@ -186,8 +185,7 @@
           "range": 0.0,
           "projectile_speed": 0.0,
           "spawn_interval_sec": 3.4,
-          "unit_cap_bonus": 2,
-          "local_supply_cap": 4
+          "unit_cap_bonus": 4
         },
         {
           "cost": 450.0,
@@ -199,8 +197,7 @@
           "range": 0.0,
           "projectile_speed": 0.0,
           "spawn_interval_sec": 2.6,
-          "unit_cap_bonus": 3,
-          "local_supply_cap": 6
+          "unit_cap_bonus": 6
         }
       ],
       "effects": {}
