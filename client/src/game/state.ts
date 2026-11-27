@@ -1,6 +1,7 @@
 import {
   DEFAULT_BALANCE,
   getBuildingConfigByKind,
+  getBuildingRadius,
   type BalanceConfig,
 } from "./balance.ts";
 import type {
@@ -269,6 +270,15 @@ export class ClientGameState {
   lostSquadHold: { x: number; y: number; untilMs: number } | null = null;
   pendingNewSquadTarget: Point2D | null = null;
   pendingNewSquadPrevIds: Set<number> | null = null;
+  lastSoldBuildingId: number | null = null;
+  buildingRuins: Array<{
+    ownerId: number;
+    relX: number;
+    relY: number;
+    radius: number;
+    createdAtMs: number;
+    expiresAtMs: number;
+  }> = [];
 
   buildKind: number | null = null;
   actionMode: "upgrade" | "sell" | null = null;
@@ -396,9 +406,29 @@ export class ClientGameState {
             color: "#ffb454",
             alpha: 0.98,
           });
+          if (
+            oldB.kind !== 0 &&
+            id !== this.lastSoldBuildingId &&
+            msg.zones.some((nz) => nz.playerId === oldB.ownerId)
+          ) {
+            this.buildingRuins.push({
+              ownerId: oldB.ownerId,
+              relX: oldB.relX,
+              relY: oldB.relY,
+              radius: getBuildingRadius(this.balance, oldB.kind),
+              createdAtMs: now,
+              expiresAtMs: now + 20_000,
+            });
+          }
+        }
+        if (id === this.lastSoldBuildingId) {
+          this.lastSoldBuildingId = null;
         }
       }
     }
+    this.buildingRuins = this.buildingRuins.filter(
+      (r) => r.expiresAtMs > now && msg.zones.some((nz) => nz.playerId === r.ownerId),
+    );
 
     this.tick = msg.tick;
     this.score = msg.score;
@@ -427,12 +457,9 @@ export class ClientGameState {
         liveSquads.set(u.squad, cur);
       }
       for (const sid of Array.from(this.squadOrders.keys())) {
-        if (!liveSquads.has(sid)) {
+        if (!liveSquads.has(sid) && sid !== this.reinforceSquad) {
           this.squadOrders.delete(sid);
         }
-      }
-      if (this.reinforceSquad > 0 && !liveSquads.has(this.reinforceSquad)) {
-        this.reinforceSquad = 0;
       }
       if (this.pendingNewSquadTarget) {
         let newSid: number | null = null;
@@ -453,7 +480,9 @@ export class ClientGameState {
       if (this.activeSquad > 0) {
         const cur = liveSquads.get(this.activeSquad);
         if (cur && cur.cnt > 0) {
-          this.lastSquadCentroid = { x: cur.sx / cur.cnt, y: cur.sy / cur.cnt };
+          this.lostSquadHold = null;
+        } else if (this.activeSquad === this.reinforceSquad) {
+          // Keep active squad & camera locked on the target order while reinforcements are spawning/en route
           this.lostSquadHold = null;
         } else if (this.lastSquadCentroid) {
           let mergedId: number | null = null;
@@ -862,9 +891,25 @@ export class ClientGameState {
     }
 
     if (pts.length > 0) {
+      const orderPt = this.squadOrders.get(targetSquad);
+      // If reinforcing and the vanguard was wiped (all remaining drones are far behind >420px from target/last centroid),
+      // keep camera steady at the target marker under fog-of-war instead of snapping back to reinforcements!
+      if (targetSquad > 0 && this.reinforceSquad === targetSquad) {
+        const holdRef = orderPt ?? this.lastSquadCentroid;
+        if (holdRef) {
+          let minD = Infinity;
+          for (const p of pts) {
+            const d = Math.hypot(p.x - holdRef.x, p.y - holdRef.y);
+            if (d < minD) minD = d;
+          }
+          if (minD > 420) {
+            return holdRef;
+          }
+        }
+      }
       // Focus on the forward/lead cluster (within 360px of the unit closest to the squad order or last centroid)
       // so newly spawned reinforcements streaming from base don't drag the camera backward.
-      const refPt = this.squadOrders.get(targetSquad) ?? this.lastSquadCentroid;
+      const refPt = orderPt ?? this.lastSquadCentroid;
       let lead = pts[0];
       if (refPt && pts.length > 1) {
         let bestD = Infinity;
@@ -889,6 +934,11 @@ export class ClientGameState {
       const pt = cnt > 0 ? { x: sx / cnt, y: sy / cnt } : lead;
       this.lastSquadCentroid = pt;
       return pt;
+    }
+
+    if (targetSquad > 0 && this.reinforceSquad === targetSquad) {
+      const holdRef = this.squadOrders.get(targetSquad) ?? this.lastSquadCentroid;
+      if (holdRef) return holdRef;
     }
 
     if (this.lostSquadHold && now < this.lostSquadHold.untilMs) {

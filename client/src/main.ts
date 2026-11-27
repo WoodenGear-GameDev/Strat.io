@@ -205,12 +205,10 @@ function updateAccountUi(): void {
 
 function updateToolbarUi(): void {
   const hqLevel = state.getHqLevel();
-  const inCombat = state.isInCombat();
   const buildBtns = document.querySelectorAll<HTMLButtonElement>(".build-btn");
   for (const btn of buildBtns) {
     const kind = Number(btn.dataset.kind);
     const beaconLocked = kind === 5 && hqLevel < 3;
-    const combatLocked = kind === 5 && !beaconLocked && inCombat;
     btn.disabled = beaconLocked;
     btn.classList.toggle("active", !beaconLocked && state.buildKind === kind);
     const c = getEffectiveBuildCost(kind);
@@ -232,7 +230,7 @@ function updateToolbarUi(): void {
         : `${getBuildingConfigByKind(state.balance, kind)?.name ?? "Здание"} [${kind === 5 ? 4 : kind}]`;
     btn.classList.toggle(
       "cant-afford",
-      !beaconLocked && (combatLocked || (c > 0 && state.energy < c) || (tc > 0 && state.trophies < tc)),
+      !beaconLocked && ((c > 0 && state.energy < c) || (tc > 0 && state.trophies < tc)),
     );
   }
 
@@ -311,11 +309,7 @@ function updateToolbarUi(): void {
       } else if (nextLvl) {
         const tCost = nextLvl.trophy_cost ?? 0;
         const eCost = nextLvl.cost ?? 0;
-        const combatBlockedL3 = inCombat && b.kind !== 0 && b.level + 1 >= 3;
-        if (combatBlockedL3) {
-          bcardUpgrade.disabled = true;
-          bcardUpgradeLabel.textContent = "В бою (Ур. 3 блок)";
-        } else if (tCost > 0 && eCost <= 0) {
+        if (tCost > 0 && eCost <= 0) {
           bcardUpgrade.disabled = state.trophies < tCost;
           bcardUpgradeLabel.textContent = `Улучшить (${tCost} ⚔)`;
         } else if (tCost > 0) {

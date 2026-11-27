@@ -593,6 +593,7 @@ export class InputController {
         return;
       }
       this.lastActedBuildingId = hitId;
+      this.state.lastSoldBuildingId = hitId;
       this.transport.send(encodeSellBuilding(hitId));
       return;
     }
@@ -602,13 +603,12 @@ export class InputController {
     const nextLvl = cfg?.levels[b.level];
     const hqLevel = this.state.getHqLevel();
     const blockedByHq = b.kind !== 0 && b.level >= hqLevel;
-    const blockedByCombat = this.state.isInCombat() && b.kind !== 0 && b.level + 1 >= 3;
     const affordable =
       !!nextLvl &&
       this.state.energy >= (nextLvl.cost ?? 0) &&
       this.state.trophies >= (nextLvl.trophy_cost ?? 0);
 
-    if (!isDirectClick && (!nextLvl || blockedByHq || blockedByCombat || !affordable)) {
+    if (!isDirectClick && (!nextLvl || blockedByHq || !affordable)) {
       return;
     }
     this.lastActedBuildingId = hitId;
@@ -638,13 +638,6 @@ export class InputController {
     const relY = preview.centerRel.y;
     const slotKey = `${this.state.buildKind}:${relX.toFixed(1)},${relY.toFixed(1)}`;
     if (slotKey === this.lastPaintedSlotKey) return;
-
-    if (this.state.buildKind === 5 && this.state.isInCombat()) {
-      if (showFeedbackToast) {
-        this.callbacks.onToast("В бою нельзя строить Маяки");
-      }
-      return;
-    }
 
     if (!preview.affordable) {
       if (showFeedbackToast) {

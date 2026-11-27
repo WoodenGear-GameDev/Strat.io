@@ -13,7 +13,7 @@
     "teleport_dist_factor": 0.11,
     "teleport_ring_penalty": 0.30,
     "teleport_cooldown_sec": 32.0,
-    "bot_count": 8
+    "bot_count": 15
   },
   "buildings": {
     "hq": {

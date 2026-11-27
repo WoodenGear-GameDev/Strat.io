@@ -217,8 +217,13 @@ export class CanvasRenderer {
           }
         }
 
-        // Clamp camera smoothly inside the union of all active vision circles
-        if (visionCircles.length > 0) {
+        // Clamp camera smoothly inside the union of all active vision circles,
+        // unless holding camera at a reinforced squad's target marker while waiting for reinforcements.
+        const holdingReinforceTarget =
+          state.cameraAnchor === "drones" &&
+          state.activeSquad > 0 &&
+          state.reinforceSquad === state.activeSquad;
+        if (!holdingReinforceTarget && visionCircles.length > 0) {
           let inside = false;
           let bestDist = Infinity;
           let projX = ownX;
@@ -643,6 +648,41 @@ export class CanvasRenderer {
     visionCircles: VisionCircle[],
   ): void {
     const ctx = this.ctx;
+    const now = performance.now();
+
+    // Building ruins (20s build lock indicator after destruction)
+    for (const ruin of state.buildingRuins) {
+      const z = zonePositions.get(ruin.ownerId);
+      if (!z) continue;
+      const rx = z.x + ruin.relX;
+      const ry = z.y + ruin.relY;
+      if (ruin.ownerId !== state.playerId && !this.isPointInVision(rx, ry, visionCircles)) {
+        continue;
+      }
+      const rem = Math.max(0, (ruin.expiresAtMs - now) / Math.max(1, ruin.expiresAtMs - ruin.createdAtMs));
+      ctx.save();
+      ctx.fillStyle = `rgba(32, 34, 40, ${0.45 + 0.3 * rem})`;
+      ctx.strokeStyle = `rgba(180, 120, 90, ${0.25 + 0.45 * rem})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(rx, ry, ruin.radius * 0.82, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Jagged rubble fragments
+      ctx.fillStyle = `rgba(92, 96, 108, ${0.45 + 0.35 * rem})`;
+      for (let k = 0; k < 4; k++) {
+        const a = k * 1.57 + 0.4;
+        const dist = ruin.radius * 0.38;
+        ctx.fillRect(rx + Math.cos(a) * dist - 3, ry + Math.sin(a) * dist - 2, 6, 4);
+      }
+      // Countdown arc
+      ctx.strokeStyle = `rgba(235, 160, 100, ${0.5 + 0.4 * rem})`;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.arc(rx, ry, ruin.radius * 0.94, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * rem);
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // Squad target markers & lines
     if (state.playerId !== null) {

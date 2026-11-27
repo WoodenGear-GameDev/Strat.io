@@ -1,3 +1,6 @@
+#[path = "bots.rs"]
+mod bots;
+
 use crate::config::BalanceConfig;
 use crate::protocol::{
     ClientMessage, LeaderboardEntry, PlayerMetaEntry, ServerMessage, SnapshotBuilding,
@@ -131,29 +134,6 @@ pub fn beacon_ext_radius(level: u8) -> f32 {
         2 => 85.0,
         _ => 105.0,
     }
-}
-
-#[derive(Default)]
-struct BotPlayerIntel {
-    hq_id: EntityId,
-    hq_lvl: u8,
-    hq_hp: u16,
-    hq_max_hp: u16,
-    gens: usize,
-    turrets: usize,
-    barracks: usize,
-    beacons: usize,
-    total_buildings: usize,
-    turret_power: f32,
-    gen_positions: Vec<(f32, f32)>,
-    turret_positions: Vec<(f32, f32)>,
-    beacon_positions: Vec<(f32, f32)>,
-    barracks_info: Vec<(EntityId, u8, u8)>,
-    non_hq_buildings: Vec<(EntityId, u8, u8)>,
-    own_units: usize,
-    own_combat_power: f32,
-    defending_unit_power: f32,
-    enemy_threat_power: f32,
 }
 
 pub struct World {
@@ -390,6 +370,10 @@ impl World {
         }
         while dtheta < -std::f32::consts::PI {
             dtheta += TAU;
+        }
+        // Prevent flip-flopping between +pi and -pi when target is nearly opposite across the arena
+        if dtheta.abs() > 2.85 {
+            dtheta = dtheta.abs();
         }
         if dtheta.abs() < 0.14 {
             return (dx / dist, dy / dist);
@@ -857,9 +841,6 @@ impl World {
                     };
                     let now_sec = player.survival_sec;
                     player.build_combat_locks.retain(|lk| lk.expires_at_sec > now_sec);
-                    if building_kind == 5 && player.is_in_combat() {
-                        return Some(17);
-                    }
                     if player
                         .build_combat_locks
                         .iter()
@@ -950,9 +931,6 @@ impl World {
                     let Some(player) = self.players.get_mut(&player_id) else {
                         return Some(1);
                     };
-                    if kind != 0 && cur_level + 1 >= 3 && player.is_in_combat() {
-                        return Some(17);
-                    }
                     if player.trophies < trophy_cost {
                         return Some(15);
                     }
@@ -1160,19 +1138,10 @@ impl World {
                                     if outside_zone {
                                         player.spawn_protection_left = 0.0;
                                     }
-                                    let new_id = if player.squads.len() < 5 {
-                                        let mut cand = player.next_squad_id.max(1);
-                                        for _ in 0..250 {
-                                            if !player.squads.contains_key(&cand) {
-                                                break;
-                                            }
-                                            cand = if cand >= 250 { 1 } else { cand + 1 };
-                                        }
-                                        player.next_squad_id = if cand >= 250 { 1 } else { cand + 1 };
-                                        cand
-                                    } else {
-                                        *player.squads.keys().min().unwrap_or(&1)
-                                    };
+                                    let new_id = (1..=5_u8)
+                                        .find(|id| !player.squads.contains_key(id))
+                                        .unwrap_or_else(|| *player.squads.keys().min().unwrap_or(&1));
+                                    player.next_squad_id = new_id;
                                     player.squads.insert(
                                         new_id,
                                         crate::types::SquadOrder {
@@ -1426,7 +1395,11 @@ impl World {
         for pid in player_ids {
             let Some(mut squad_map) = per_player.remove(&pid) else {
                 if let Some(pl) = self.players.get_mut(&pid) {
-                    pl.squads.clear();
+                    if let Some(rsid) = pl.reinforce_squad {
+                        pl.squads.retain(|&sid, _| sid == rsid);
+                    } else {
+                        pl.squads.clear();
+                    }
                 }
                 continue;
             };
@@ -1436,7 +1409,7 @@ impl World {
             let mut next_id = self.players.get(&pid).map(|p| p.next_squad_id).unwrap_or(1);
             let mut reinforce_sid = self.players.get(&pid).and_then(|p| p.reinforce_squad);
 
-            orders.retain(|sid, _| squad_map.contains_key(sid));
+            orders.retain(|sid, _| squad_map.contains_key(sid) || reinforce_sid == Some(*sid));
             if let Some(rsid) = reinforce_sid {
                 if !orders.contains_key(&rsid) {
                     reinforce_sid = None;
@@ -1505,17 +1478,10 @@ impl World {
                 });
 
                 for comp in components.into_iter().skip(1) {
-                    if orders.len() >= 5 {
+                    let Some(cand) = (1..=5_u8).find(|id| !orders.contains_key(id)) else {
                         break;
-                    }
-                    let mut cand = next_id.max(1);
-                    for _ in 0..250 {
-                        if !orders.contains_key(&cand) {
-                            break;
-                        }
-                        cand = if cand >= 250 { 1 } else { cand + 1 };
-                    }
-                    next_id = if cand >= 250 { 1 } else { cand + 1 };
+                    };
+                    next_id = cand;
                     orders.insert(cand, order);
                     for &ui in &comp {
                         self.units[ui].squad = cand;
@@ -1827,986 +1793,6 @@ impl World {
         let cfg = self.config.building_by_kind(kind)?;
         let next = cfg.levels.get(usize::from(cur_level))?;
         Some((next.cost, next.trophy_cost))
-    }
-
-    /// Aggregates per-player base composition, turret coverage, army strength, and active threats.
-    fn gather_bot_intel(&self) -> HashMap<PlayerId, BotPlayerIntel> {
-        let mut map: HashMap<PlayerId, BotPlayerIntel> = self
-            .zones
-            .keys()
-            .map(|&pid| (pid, BotPlayerIntel::default()))
-            .collect();
-
-        for b in &self.buildings {
-            let entry = map.entry(b.owner_id).or_default();
-            entry.total_buildings += 1;
-            match b.kind {
-                0 => {
-                    entry.hq_id = b.id;
-                    entry.hq_lvl = b.level;
-                    entry.hq_hp = b.hp;
-                    entry.hq_max_hp = b.max_hp.max(1);
-                }
-                1 => {
-                    entry.gens += 1;
-                    entry.gen_positions.push((b.rel_x, b.rel_y));
-                }
-                2 => {
-                    entry.turrets += 1;
-                    entry.turret_positions.push((b.rel_x, b.rel_y));
-                    entry.turret_power += match b.level {
-                        1 => 4.2,
-                        2 => 7.2,
-                        _ => 11.5,
-                    };
-                }
-                3 => {
-                    entry.barracks += 1;
-                    entry.barracks_info.push((b.id, b.level, b.meta));
-                }
-                5 => {
-                    entry.beacons += 1;
-                    entry.beacon_positions.push((b.rel_x, b.rel_y));
-                }
-                _ => {}
-            }
-            if b.kind != 0 {
-                entry.non_hq_buildings.push((b.id, b.kind, b.level));
-            }
-        }
-
-        let bot_zones: Vec<(PlayerId, f32, f32, f32)> = self
-            .players
-            .values()
-            .filter(|p| p.is_bot)
-            .filter_map(|p| self.zones.get(&p.id).map(|z| (p.id, z.x, z.y, z.radius + 230.0)))
-            .collect();
-
-        for u in &self.units {
-            if u.owner_id == 0 || u.hp == 0 {
-                continue;
-            }
-            let power = match u.kind {
-                2 => 4.2_f32,
-                1 => 1.35,
-                _ => 1.0,
-            };
-            if let Some(entry) = map.get_mut(&u.owner_id) {
-                entry.own_units += 1;
-                entry.own_combat_power += power;
-                if let Some(oz) = self.zones.get(&u.owner_id) {
-                    if (u.x - oz.x).hypot(u.y - oz.y) <= oz.radius + 260.0 {
-                        entry.defending_unit_power += power;
-                    }
-                }
-            }
-            for &(bpid, zx, zy, perim_r) in &bot_zones {
-                if u.owner_id != bpid && (u.x - zx).hypot(u.y - zy) <= perim_r {
-                    if let Some(entry) = map.get_mut(&bpid) {
-                        entry.enemy_threat_power += power;
-                    }
-                }
-            }
-        }
-
-        map
-    }
-
-    /// Refreshes local building counts/positions for one bot after mutating commands mid-think.
-    fn refresh_bot_building_intel(&self, pid: PlayerId, intel: &mut BotPlayerIntel) {
-        intel.hq_id = 0;
-        intel.hq_lvl = 1;
-        intel.hq_hp = 0;
-        intel.hq_max_hp = 1;
-        intel.gens = 0;
-        intel.turrets = 0;
-        intel.barracks = 0;
-        intel.beacons = 0;
-        intel.total_buildings = 0;
-        intel.turret_power = 0.0;
-        intel.gen_positions.clear();
-        intel.turret_positions.clear();
-        intel.beacon_positions.clear();
-        intel.barracks_info.clear();
-        intel.non_hq_buildings.clear();
-
-        for b in &self.buildings {
-            if b.owner_id != pid {
-                continue;
-            }
-            intel.total_buildings += 1;
-            match b.kind {
-                0 => {
-                    intel.hq_id = b.id;
-                    intel.hq_lvl = b.level;
-                    intel.hq_hp = b.hp;
-                    intel.hq_max_hp = b.max_hp.max(1);
-                }
-                1 => {
-                    intel.gens += 1;
-                    intel.gen_positions.push((b.rel_x, b.rel_y));
-                }
-                2 => {
-                    intel.turrets += 1;
-                    intel.turret_positions.push((b.rel_x, b.rel_y));
-                    intel.turret_power += match b.level {
-                        1 => 4.2,
-                        2 => 7.2,
-                        _ => 11.5,
-                    };
-                }
-                3 => {
-                    intel.barracks += 1;
-                    intel.barracks_info.push((b.id, b.level, b.meta));
-                }
-                5 => {
-                    intel.beacons += 1;
-                    intel.beacon_positions.push((b.rel_x, b.rel_y));
-                }
-                _ => {}
-            }
-            if b.kind != 0 {
-                intel.non_hq_buildings.push((b.id, b.kind, b.level));
-            }
-        }
-    }
-
-    /// Teleports a bot to a safe clear position in `target_ring` if affordable and off cooldown.
-    fn bot_try_teleport_to_ring(&mut self, pid: PlayerId, target_ring: u8) -> bool {
-        let Some(p) = self.players.get(&pid) else {
-            return false;
-        };
-        if p.teleport_cooldown_left > 0.0 {
-            return false;
-        }
-        let energy = p.energy;
-        let Some(zone) = self.zones.get(&pid).cloned() else {
-            return false;
-        };
-        let map_r = self.config.world.map_radius;
-        let (min_r, max_r) = match target_ring {
-            3 => (RING2_RADIUS + zone.radius + 110.0, (map_r - zone.radius - 40.0).max(RING2_RADIUS + 200.0)),
-            _ => (RING1_RADIUS + zone.radius + 200.0, (RING2_RADIUS - zone.radius - 120.0).max(RING1_RADIUS + 300.0)),
-        };
-        let r_eq = self.equilibrium_radius(pid);
-        let ring_mid = ((min_r + max_r) * 0.5).clamp(min_r, max_r);
-        let target_r = r_eq.clamp(min_r, max_r).max(ring_mid * 0.92);
-
-        for i in 0..16 {
-            let angle = (i as f32) * (TAU / 16.0) + self.rng.gen_range(-0.12..0.12);
-            let tx = angle.cos() * target_r;
-            let ty = angle.sin() * target_r;
-
-            let clear_zones = self.zones.values().all(|other| {
-                other.player_id == pid
-                    || (tx - other.x).hypot(ty - other.y) >= zone.radius + other.radius + 160.0
-            });
-            if !clear_zones {
-                continue;
-            }
-            let clear_beacons = self.buildings.iter().all(|b| {
-                if b.owner_id == pid || b.kind != 5 {
-                    return true;
-                }
-                let Some(other) = self.zones.get(&b.owner_id) else {
-                    return true;
-                };
-                let ext_r = beacon_ext_radius(b.level);
-                (tx - (other.x + b.rel_x)).hypot(ty - (other.y + b.rel_y)) >= zone.radius + ext_r + 125.0
-            });
-            if !clear_beacons {
-                continue;
-            }
-
-            let dist = (tx - zone.x).hypot(ty - zone.y);
-            let ring_pen = if target_r < r_eq {
-                self.config.world.teleport_ring_penalty * 3.0
-            } else {
-                self.config.world.teleport_ring_penalty
-            };
-            let est_cost = self.config.world.teleport_base_cost
-                + dist * self.config.world.teleport_dist_factor
-                + (target_r - r_eq).abs() * ring_pen;
-            if energy < est_cost + 20.0 {
-                continue;
-            }
-
-            if self
-                .apply_command(
-                    pid,
-                    ClientMessage::TeleportZone {
-                        target_x: tx,
-                        target_y: ty,
-                    },
-                )
-                .is_none()
-            {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Configures barrack unit types by archetype for a balanced Raider/Archer/Titan mix.
-    fn bot_configure_barracks(&mut self, pid: PlayerId, arch: u8, barracks_info: &[(EntityId, u8, u8)]) {
-        for (idx, &(bid, blvl, bmeta)) in barracks_info.iter().enumerate() {
-            let slot = idx % 4;
-            let desired_utype = match arch {
-                1 => match blvl {
-                    // Dreadnought: Titan frontline + Archer backline + Raider finishers
-                    3.. => [2_u8, 1, 2, 0][slot],
-                    2 => [1_u8, 1, 0, 1][slot],
-                    _ => 0,
-                },
-                2 => match blvl {
-                    // Hunter: fast Raider pressure backed by Archers & occasional Titan
-                    3.. => [0_u8, 1, 0, 2][slot],
-                    2 => [0_u8, 1, 0, 0][slot],
-                    _ => 0,
-                },
-                _ => match blvl {
-                    // Balanced / Architect: heavy Archer + Titan core + fast Raiders
-                    3.. => [1_u8, 2, 0, 1][slot],
-                    2 => [1_u8, 0, 1, 1][slot],
-                    _ => 0,
-                },
-            };
-            if ((bmeta >> 2) & 0x07) != desired_utype {
-                let _ = self.apply_command(
-                    pid,
-                    ClientMessage::ConfigureBuilding {
-                        building_id: bid,
-                        meta: desired_utype << 2,
-                    },
-                );
-            }
-        }
-    }
-
-    /// Picks a tactically optimal free hex or rhombus coordinate for `build_kind`.
-    fn bot_pick_build_slot(
-        &mut self,
-        pid: PlayerId,
-        build_kind: u8,
-        gen_aura_r: f32,
-        intel: &BotPlayerIntel,
-    ) -> (Option<(f32, f32)>, usize, usize) {
-        let open_hexes = self.collect_player_open_large_hexes(pid);
-        let rhombuses = collect_rhombuses(&open_hexes);
-        let occupied = self.collect_player_occupied_tris(pid, &rhombuses);
-
-        let free_hex_list: Vec<(i32, i32)> = open_hexes
-            .iter()
-            .copied()
-            .filter(|&(q, r)| !(0..6_u8).any(|s| occupied.contains(&(q, r, s))))
-            .collect();
-        let free_rhombus_list: Vec<([TriCoord; 2], (f32, f32))> = rhombuses
-            .iter()
-            .copied()
-            .filter(|&(tris, _)| !occupied.contains(&tris[0]) && !occupied.contains(&tris[1]))
-            .collect();
-
-        let free_hex_count = free_hex_list.len();
-        let free_rhom_count = free_rhombus_list.len();
-        let aura_r = (gen_aura_r - 4.0).max(40.0);
-
-        let picked = if is_large_building(build_kind) {
-            let mut best: Option<((f32, f32), f32)> = None;
-            for (q, r) in free_hex_list {
-                let (cx, cy) = hex_to_rel(q, r);
-                let dist_hq = cx.hypot(cy);
-                let jitter = self.rng.gen_range(0.0..6.0);
-                let score = if build_kind == 2 {
-                    let aura_bonus = if intel
-                        .gen_positions
-                        .iter()
-                        .any(|&(gx, gy)| (cx - gx).hypot(cy - gy) <= aura_r)
-                    {
-                        120.0
-                    } else {
-                        0.0
-                    };
-                    let min_t_dist = intel
-                        .turret_positions
-                        .iter()
-                        .map(|&(tx, ty)| (cx - tx).hypot(cy - ty))
-                        .fold(140.0_f32, f32::min);
-                    let ring_pref = -((dist_hq - 86.0).abs() * 0.45);
-                    aura_bonus + ring_pref + min_t_dist.min(140.0) * 0.3 + jitter
-                } else {
-                    // Barracks: slightly prefer mid/outer hexes so core inner ring stays open for Turrets
-                    let outer_pref = if dist_hq >= 55.0 { 24.0 } else { 0.0 };
-                    outer_pref + jitter
-                };
-                if best.as_ref().is_none_or(|&(_, bs)| score > bs) {
-                    best = Some(((cx, cy), score));
-                }
-            }
-            best.map(|(pos, _)| pos)
-        } else {
-            let mut best: Option<((f32, f32), f32)> = None;
-            for (tris, (mx, my)) in free_rhombus_list {
-                let dist_hq = mx.hypot(my);
-                let jitter = self.rng.gen_range(0.0..5.0);
-                let score = if build_kind == 5 {
-                    let min_b_dist = intel
-                        .beacon_positions
-                        .iter()
-                        .map(|&(bx, by)| (mx - bx).hypot(my - by))
-                        .fold(f32::MAX, f32::min);
-                    let spacing_bonus = if min_b_dist >= 82.0 { 350.0 } else { min_b_dist * 2.0 };
-                    dist_hq * 1.4 + spacing_bonus + jitter
-                } else {
-                    // Generator: buff uncovered Turrets & pack onto already-used hexes to save full hexes
-                    let turret_buff = intel
-                        .turret_positions
-                        .iter()
-                        .filter(|&&(tx, ty)| {
-                            (mx - tx).hypot(my - ty) <= aura_r
-                                && !intel
-                                    .gen_positions
-                                    .iter()
-                                    .any(|&(gx, gy)| (gx - tx).hypot(gy - ty) <= aura_r)
-                        })
-                        .count() as f32
-                        * 115.0;
-                    let mut shared_hex_bonus = 0.0_f32;
-                    for (hq_q, hq_r, _) in tris {
-                        if (0..6_u8).any(|s| occupied.contains(&(hq_q, hq_r, s))) {
-                            shared_hex_bonus += 65.0;
-                        }
-                    }
-                    turret_buff + shared_hex_bonus - dist_hq * 0.15 + jitter
-                };
-                if best.as_ref().is_none_or(|&(_, bs)| score > bs) {
-                    best = Some(((mx, my), score));
-                }
-            }
-            best.map(|(pos, _)| pos)
-        };
-
-        (picked, free_hex_count, free_rhom_count)
-    }
-
-    /// Executes up to `max_actions` prioritized upgrades and builds for a single bot think tick.
-    fn bot_step_economy(
-        &mut self,
-        pid: PlayerId,
-        tier: u8,
-        arch: u8,
-        gen_aura_r: f32,
-        intel: &mut BotPlayerIntel,
-    ) {
-        let max_actions = match tier {
-            1 => 2,
-            2 => 3,
-            _ => 5,
-        };
-        let max_b_lvl = tier.clamp(1, 3);
-
-        for _ in 0..max_actions {
-            let (energy, trophies, in_combat) = self
-                .players
-                .get(&pid)
-                .map(|p| (p.energy, p.trophies, p.is_in_combat()))
-                .unwrap_or((0.0, 0.0, false));
-
-            // 1. Always upgrade HQ first once affordable (unlocks slots, levels, cap, beacons)
-            if intel.hq_id != 0 && intel.hq_lvl < max_b_lvl && intel.total_buildings >= 2 {
-                if let Some((e_cost, t_cost)) = self.building_upgrade_cost(0, intel.hq_lvl) {
-                    if energy >= e_cost && trophies >= t_cost {
-                        if self
-                            .apply_command(
-                                pid,
-                                ClientMessage::UpgradeBuilding {
-                                    building_id: intel.hq_id,
-                                },
-                            )
-                            .is_none()
-                        {
-                            self.refresh_bot_building_intel(pid, intel);
-                            continue;
-                        }
-                    }
-                }
-            }
-
-            let threatened = intel.enemy_threat_power >= 1.5;
-            let (_, free_hexes, free_rhombuses) = self.bot_pick_build_slot(pid, 3, gen_aura_r, intel);
-
-            // 2. Hard opener essentials before branching out
-            let opener_kind = if intel.gens < 2 && free_rhombuses > 0 {
-                Some(1_u8)
-            } else if intel.turrets < 1 && free_hexes > 0 {
-                Some(2_u8)
-            } else if intel.barracks < 1 && free_hexes > 0 {
-                Some(3_u8)
-            } else {
-                None
-            };
-
-            if let Some(bk) = opener_kind {
-                let cost = self.building_build_cost(bk);
-                if energy >= cost {
-                    if let (Some((bx, by)), _, _) = self.bot_pick_build_slot(pid, bk, gen_aura_r, intel) {
-                        if self
-                            .apply_command(
-                                pid,
-                                ClientMessage::Build {
-                                    building_kind: bk,
-                                    rel_x: bx,
-                                    rel_y: by,
-                                },
-                            )
-                            .is_none()
-                        {
-                            self.refresh_bot_building_intel(pid, intel);
-                            continue;
-                        }
-                    }
-                }
-                break;
-            }
-
-            // 3. Evaluate best affordable upgrade candidate
-            let mut best_upgrade: Option<(EntityId, f32)> = None;
-            for &(bid, kind, lvl) in &intel.non_hq_buildings {
-                if lvl >= max_b_lvl || lvl >= intel.hq_lvl {
-                    continue;
-                }
-                if in_combat && lvl + 1 >= 3 {
-                    continue;
-                }
-                let Some((u_cost, t_cost)) = self.building_upgrade_cost(kind, lvl) else {
-                    continue;
-                };
-                if energy < u_cost || trophies < t_cost {
-                    continue;
-                }
-                let score = match kind {
-                    2 => {
-                        if threatened {
-                            135.0
-                        } else if lvl == 1 {
-                            105.0
-                        } else {
-                            82.0
-                        }
-                    }
-                    3 => {
-                        if lvl == 1 {
-                            115.0
-                        } else {
-                            96.0
-                        }
-                    }
-                    1 => {
-                        if !threatened && energy < 700.0 {
-                            112.0
-                        } else {
-                            76.0
-                        }
-                    }
-                    5 => {
-                        if free_hexes <= 2 || energy >= 600.0 {
-                            70.0
-                        } else {
-                            25.0
-                        }
-                    }
-                    _ => 50.0,
-                };
-                if best_upgrade.as_ref().is_none_or(|&(_, bs)| score > bs) {
-                    best_upgrade = Some((bid, score));
-                }
-            }
-
-            // 4. Economy-aware expansion (keep Generators ahead of Barracks so paid drone spawns stay funded)
-            let min_turrets = match intel.hq_lvl {
-                1 => if threatened || arch == 1 { 2 } else { 1 },
-                2 => if threatened || arch == 1 { 3 } else { 2 },
-                _ => if threatened || arch == 1 || arch == 4 { 4 } else { 3 },
-            };
-            let desired_beacons = if intel.hq_lvl >= 3 && !in_combat {
-                if arch == 4 { 4 } else { 3 }
-            } else {
-                0
-            };
-            let max_bot_barracks = match intel.hq_lvl {
-                1 => 4_usize,
-                2 => 7_usize,
-                _ => 12_usize,
-            };
-            let target_gens = 2 + usize::from(intel.hq_lvl) * 2 + usize::from(arch == 0 || arch == 4);
-            let turret_ratio = if arch == 1 { 2 } else { 3 };
-            let need_eco_for_barracks = intel.gens * 5 < intel.barracks * 4 && free_rhombuses > 0;
-
-            let build_choice: Option<(u8, f32)> = if intel.turrets < min_turrets && free_hexes > 0 {
-                Some((2, if threatened { 145.0 } else { 122.0 }))
-            } else if need_eco_for_barracks && intel.gens < target_gens + 2 {
-                Some((1, 118.0))
-            } else if intel.hq_lvl >= 3
-                && !in_combat
-                && intel.beacons < desired_beacons
-                && (intel.barracks >= 2 || free_hexes <= 3)
-                && free_rhombuses > 0
-                && trophies >= (90.0 * 1.65_f32.powi(intel.beacons as i32)).round()
-            {
-                Some((5, if free_hexes <= 2 { 114.0 } else { 96.0 }))
-            } else if intel.gens < target_gens && free_rhombuses > 0 && (free_hexes >= 2 || intel.barracks >= 2) {
-                Some((1, if intel.gens < usize::from(intel.hq_lvl) * 2 { 104.0 } else { 78.0 }))
-            } else if free_hexes > 0 && intel.barracks < max_bot_barracks {
-                let want_turret = intel.turrets * turret_ratio < intel.barracks;
-                Some((if want_turret { 2 } else { 3 }, 94.0))
-            } else if free_rhombuses > 0 && intel.gens < target_gens + 3 {
-                Some((1, 68.0))
-            } else {
-                None
-            };
-
-            let affordable_build = build_choice.and_then(|(bk, sc)| {
-                let c = self.building_build_cost(bk);
-                let tc = if bk == 5 {
-                    (90.0 * 1.65_f32.powi(intel.beacons as i32)).round()
-                } else {
-                    0.0
-                };
-                if energy >= c && trophies >= tc {
-                    Some((bk, sc))
-                } else {
-                    None
-                }
-            });
-
-            let do_upgrade = match (best_upgrade, affordable_build) {
-                (Some((bid, us)), Some((_, bs))) => {
-                    if us >= bs {
-                        Some(bid)
-                    } else {
-                        None
-                    }
-                }
-                (Some((bid, _)), None) => Some(bid),
-                _ => None,
-            };
-
-            if let Some(bid) = do_upgrade {
-                if self
-                    .apply_command(pid, ClientMessage::UpgradeBuilding { building_id: bid })
-                    .is_none()
-                {
-                    self.refresh_bot_building_intel(pid, intel);
-                    continue;
-                }
-            } else if let Some((bk, _)) = affordable_build {
-                if let (Some((bx, by)), _, _) = self.bot_pick_build_slot(pid, bk, gen_aura_r, intel) {
-                    if self
-                        .apply_command(
-                            pid,
-                            ClientMessage::Build {
-                                building_kind: bk,
-                                rel_x: bx,
-                                rel_y: by,
-                            },
-                        )
-                        .is_none()
-                    {
-                        self.refresh_bot_building_intel(pid, intel);
-                        continue;
-                    }
-                }
-            }
-            break;
-        }
-    }
-
-    fn step_bots(&mut self, dt: f32) {
-        // 3 active starters in Ring 1, 3 active in Ring 2, 2 strong in Ring 3
-        let desired_bots = [
-            (1u8, 2u8, "Малек-1"),
-            (1u8, 3u8, "Малек-2"),
-            (1u8, 0u8, "Старатель-1"),
-            (2u8, 2u8, "Рейдер-1"),
-            (2u8, 3u8, "Рейдер-2"),
-            (2u8, 1u8, "Дредноут-1"),
-            (3u8, 4u8, "Архитектор-1"),
-            (3u8, 2u8, "Охотник-1"),
-        ];
-        for (tier, arch, name) in desired_bots {
-            if !self.players.values().any(|p| p.is_bot && p.name == name) {
-                self.add_player_internal(name.to_string(), None, 0, tier, arch);
-            }
-        }
-
-        let bot_ids: Vec<(PlayerId, u8, u8)> = self
-            .players
-            .values()
-            .filter(|p| p.is_bot)
-            .map(|p| (p.id, p.bot_tier, p.bot_archetype))
-            .collect();
-
-        let mut ready_bots: Vec<(PlayerId, u8, u8)> = Vec::new();
-        for (pid, tier, arch) in bot_ids {
-            let think_cd = match tier {
-                1 => 1.2,
-                3 => 0.45,
-                _ => 0.75,
-            };
-            if let Some(p) = self.players.get_mut(&pid) {
-                p.bot_think_cooldown -= dt;
-                if p.bot_think_cooldown <= 0.0 {
-                    p.bot_think_cooldown = think_cd;
-                    ready_bots.push((pid, tier, arch));
-                }
-            }
-        }
-        if ready_bots.is_empty() {
-            return;
-        }
-
-        let mut sorted_scores: Vec<(PlayerId, u32)> = self
-            .players
-            .values()
-            .filter(|p| p.score >= 400)
-            .map(|p| (p.id, p.score))
-            .collect();
-        sorted_scores.sort_unstable_by(|a, b| b.1.cmp(&a.1));
-        let top3_leaders: HashSet<PlayerId> =
-            sorted_scores.iter().take(3).map(|&(id, _)| id).collect();
-        let leader_id = sorted_scores.first().map(|&(id, _)| id);
-
-        let gen_aura_r = self
-            .config
-            .building_by_kind(1)
-            .map(|c| c.effects.aura_radius)
-            .unwrap_or(140.0);
-
-        let mut intel_map = self.gather_bot_intel();
-
-        for (pid, tier, arch) in ready_bots {
-            let Some(mut bot_intel) = intel_map.remove(&pid) else {
-                continue;
-            };
-
-            let (energy, unit_cap, bot_now_sec, active_squad_opt) = self
-                .players
-                .get(&pid)
-                .map(|p| {
-                    let primary_sq = p
-                        .squads
-                        .keys()
-                        .copied()
-                        .min()
-                        .filter(|&sq| {
-                            self.units
-                                .iter()
-                                .any(|u| u.owner_id == pid && u.hp > 0 && u.kind != 4 && u.squad == sq)
-                        });
-                    (p.energy, p.unit_cap, p.survival_sec, primary_sq)
-                })
-                .unwrap_or((0.0, 4, 0.0, None));
-            let old_rally_info = active_squad_opt.and_then(|sq| {
-                self.players
-                    .get(&pid)
-                    .and_then(|p| p.squads.get(&sq).map(|o| (sq, o.target_x, o.target_y)))
-            });
-            let garrison_count = self
-                .units
-                .iter()
-                .filter(|u| u.owner_id == pid && u.hp > 0 && u.kind != 4 && u.squad == 0)
-                .count();
-            let mut active_squad_units = 0_usize;
-            if let Some(sq) = active_squad_opt {
-                active_squad_units = self
-                    .units
-                    .iter()
-                    .filter(|u| u.owner_id == pid && u.hp > 0 && u.kind != 4 && u.squad == sq)
-                    .count();
-            }
-
-            if let Some(own_z) = self.zones.get(&pid).cloned() {
-                let own_r = own_z.x.hypot(own_z.y);
-                let own_r_eq = self.equilibrium_radius(pid);
-                let cur_ring = Self::ring_for_radius(own_r);
-                if own_r_eq >= RING1_RADIUS && own_r < RING1_RADIUS + own_z.radius + 20.0 {
-                    let _ = self.bot_try_teleport_to_ring(pid, if tier == 3 { 3 } else { 2 });
-                } else if tier == 3
-                    && cur_ring < 3
-                    && own_r_eq >= RING2_RADIUS - 120.0
-                    && energy >= 450.0
-                    && bot_intel.enemy_threat_power < 1.5
-                {
-                    let _ = self.bot_try_teleport_to_ring(pid, 3);
-                }
-            }
-
-            // 2. Configure Barracks mix & execute multi-action builds/upgrades
-            if !bot_intel.barracks_info.is_empty() {
-                self.bot_configure_barracks(pid, arch, &bot_intel.barracks_info);
-            }
-            self.bot_step_economy(pid, tier, arch, gen_aura_r, &mut bot_intel);
-
-            // 3. Archetype-driven Tactical AI with Honest Fog-of-War & Squad Control
-            if bot_intel.enemy_threat_power >= 2.0 && garrison_count == 0 && active_squad_opt.is_none() {
-                intel_map.insert(pid, bot_intel);
-                continue;
-            }
-
-            let wave_threshold = match arch {
-                2 => 4,
-                3 => 5,
-                1 => ((usize::from(unit_cap) * 3) / 4).max(8),
-                4 | 0 => ((usize::from(unit_cap) * 85) / 100).max(7),
-                _ => ((usize::from(unit_cap) * 2) / 3).max(6),
-            };
-
-            let garrison_ready = garrison_count >= wave_threshold;
-            let squad_ready = active_squad_units >= 2;
-            let full_cap_push = garrison_count >= (usize::from(unit_cap) * 8) / 10
-                || active_squad_units >= (usize::from(unit_cap) * 7) / 10;
-
-            if garrison_ready || squad_ready {
-                let own_r_eq = self.equilibrium_radius(pid);
-                if let Some(own_z) = self.zones.get(&pid).cloned() {
-                    let own_r = own_z.x.hypot(own_z.y);
-                    let mut known = self
-                        .players
-                        .get_mut(&pid)
-                        .map(|p| std::mem::take(&mut p.bot_known_intel))
-                        .unwrap_or_default();
-                    let mut scout_ang = self
-                        .players
-                        .get(&pid)
-                        .map(|p| p.bot_scout_angle)
-                        .unwrap_or(0.0);
-
-                    for z in self.zones.values() {
-                        if z.player_id == pid {
-                            continue;
-                        }
-                        let Some(tp) = self.players.get(&z.player_id) else {
-                            continue;
-                        };
-                        let in_vision = self.has_vision_at(pid, z.x, z.y)
-                            || (z.x - own_z.x).hypot(z.y - own_z.y) <= own_z.radius + z.radius + 360.0;
-                        let ez_intel = intel_map.get(&z.player_id);
-                        let ez_hq_lvl = ez_intel.map(|e| e.hq_lvl).unwrap_or(1);
-
-                        if in_vision {
-                            let ez_hq_max_hp = ez_intel.map(|e| e.hq_max_hp).unwrap_or(1800);
-                            known.insert(
-                                z.player_id,
-                                crate::types::BotKnownTarget {
-                                    x: z.x,
-                                    y: z.y,
-                                    hq_lvl: ez_hq_lvl,
-                                    hq_hp: ez_intel.map(|e| e.hq_hp).unwrap_or(ez_hq_max_hp),
-                                    hq_max_hp: ez_hq_max_hp,
-                                    gens: ez_intel.map(|e| e.gens as u16).unwrap_or(0),
-                                    turret_power: ez_intel.map(|e| e.turret_power).unwrap_or(0.0),
-                                    defending_unit_power: ez_intel
-                                        .map(|e| e.defending_unit_power)
-                                        .unwrap_or(0.0),
-                                    trophies: tp.trophies,
-                                    observed_at_sec: bot_now_sec,
-                                    is_full_intel: true,
-                                },
-                            );
-                        } else {
-                            let is_leader = top3_leaders.contains(&z.player_id);
-                            let recent_tp = (tp.survival_sec - tp.last_teleport_sec) <= 8.0;
-                            if is_leader || recent_tp {
-                                let keep_fresh_full = known
-                                    .get(&z.player_id)
-                                    .map(|k| k.is_full_intel && (bot_now_sec - k.observed_at_sec) <= 20.0)
-                                    .unwrap_or(false);
-                                if !keep_fresh_full {
-                                    let est_hp = match ez_hq_lvl {
-                                        1 => 1800,
-                                        2 => 3200,
-                                        _ => 5000,
-                                    };
-                                    known.insert(
-                                        z.player_id,
-                                        crate::types::BotKnownTarget {
-                                            x: z.x,
-                                            y: z.y,
-                                            hq_lvl: ez_hq_lvl,
-                                            hq_hp: est_hp,
-                                            hq_max_hp: est_hp,
-                                            gens: u16::from(ez_hq_lvl) * 3,
-                                            turret_power: f32::from(ez_hq_lvl) * 4.2,
-                                            defending_unit_power: f32::from(ez_hq_lvl) * 3.0,
-                                            trophies: tp.trophies,
-                                            observed_at_sec: bot_now_sec,
-                                            is_full_intel: false,
-                                        },
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    known.retain(|target_id, kt| {
-                        self.zones.contains_key(target_id)
-                            && (bot_now_sec - kt.observed_at_sec) <= 45.0
-                    });
-
-                    let base_min_win = match arch {
-                        2 => 0.62_f32,
-                        3 => 0.74,
-                        1 => 0.78,
-                        0 => 1.05,
-                        _ => 0.85,
-                    };
-                    let min_win_ratio = if full_cap_push {
-                        (base_min_win * 0.85).max(0.55)
-                    } else {
-                        base_min_win
-                    };
-                    let active_combat_power = if garrison_ready {
-                        bot_intel.defending_unit_power.max(bot_intel.own_combat_power * 0.65)
-                    } else {
-                        bot_intel.own_combat_power
-                    };
-
-                    let mut best_target: Option<(f32, f32)> = None;
-                    let mut best_utility = f32::NEG_INFINITY;
-
-                    for (&target_id, kt) in &known {
-                        let Some(tp) = self.players.get(&target_id) else {
-                            continue;
-                        };
-                        let Some(cur_z) = self.zones.get(&target_id) else {
-                            continue;
-                        };
-                        let currently_visible = self.has_vision_at(pid, cur_z.x, cur_z.y);
-                        if currently_visible && tp.spawn_protection_left > 0.0 {
-                            continue;
-                        }
-
-                        let tier_diff = bot_intel.hq_lvl.saturating_sub(kt.hq_lvl);
-                        let (surviving_frac, dmg_mult, def_mult) = match tier_diff {
-                            0 => (1.0_f32, 1.0_f32, 1.0_f32),
-                            1 => (0.75, 0.50, 1.35),
-                            _ => (0.35, 0.30, 1.75),
-                        };
-
-                        let hq_dmg_mult = Self::tier_dmg_mult(bot_intel.hq_lvl, kt.hq_lvl, true);
-                        let hq_base_def = if tier_diff == 0 {
-                            0.75_f32
-                        } else {
-                            (f32::from(kt.hq_hp) / 700.0) / hq_dmg_mult.max(0.15)
-                        };
-                        let effective_attack = active_combat_power * surviving_frac * dmg_mult;
-                        let effective_defense =
-                            (kt.turret_power + kt.defending_unit_power * 1.1) * def_mult
-                                + hq_base_def;
-                        let win_ratio = effective_attack / effective_defense;
-                        if win_ratio < min_win_ratio {
-                            continue;
-                        }
-
-                        let ez_hq_ratio = f32::from(kt.hq_hp) / f32::from(kt.hq_max_hp.max(1));
-                        let (raw_reward_mult, _) = Self::tier_reward_mult(bot_intel.hq_lvl, kt.hq_lvl);
-                        let reward_weight = if arch == 2 { 0.85_f32.max(raw_reward_mult) } else { raw_reward_mult };
-                        let crown_mult = if leader_id == Some(target_id) {
-                            if arch == 1 { 2.8 } else if tier == 3 { 1.65 } else { 1.25 }
-                        } else {
-                            1.0
-                        };
-                        let finisher_bonus = if ez_hq_ratio < 0.60 {
-                            if arch == 2 || arch == 3 { 2.6 } else { 2.1 }
-                        } else {
-                            1.0
-                        };
-                        let exposed_bonus = if kt.is_full_intel && kt.defending_unit_power < 1.2 {
-                            if arch == 3 { 2.6 } else { 1.55 }
-                        } else {
-                            1.0
-                        };
-                        let loot_value = 1.0
-                            + f32::from(kt.gens) * (if arch == 3 { 0.42 } else { 0.28 })
-                            + (kt.trophies.min(400.0) / 400.0) * 0.45;
-                        let dist = (kt.x - own_z.x).hypot(kt.y - own_z.y);
-                        let dist_denom = if arch == 0 || arch == 4 { dist + 140.0 } else { dist + 240.0 };
-                        let utility = (reward_weight
-                            * crown_mult
-                            * finisher_bonus
-                            * exposed_bonus
-                            * loot_value
-                            * win_ratio.min(2.6))
-                            / dist_denom;
-                        if utility > best_utility {
-                            best_utility = utility;
-                            best_target = Some((kt.x, kt.y));
-                        }
-                    }
-
-                    if best_target.is_none() && (full_cap_push || old_rally_info.is_some()) {
-                        let any_near_rally = old_rally_info
-                            .map(|(sq, rx, ry)| {
-                                self.units.iter().any(|u| {
-                                    u.owner_id == pid
-                                        && u.hp > 0
-                                        && u.kind != 4
-                                        && u.squad == sq
-                                        && (u.x - rx).hypot(u.y - ry) <= 150.0
-                                })
-                            })
-                            .unwrap_or(true);
-                        if old_rally_info.is_none() || any_near_rally {
-                            scout_ang = (scout_ang + 1.15).rem_euclid(TAU);
-                            best_target = Some((
-                                scout_ang.cos() * own_r_eq,
-                                scout_ang.sin() * own_r_eq,
-                            ));
-                        } else if let Some((_, rx, ry)) = old_rally_info {
-                            best_target = Some((rx, ry));
-                        }
-                    }
-
-                    if let Some(p) = self.players.get_mut(&pid) {
-                        p.bot_known_intel = known;
-                        p.bot_scout_angle = scout_ang;
-                    }
-
-                    if let Some((tx, ty)) = best_target {
-                        let from_ring = Self::ring_for_radius(own_r);
-                        let to_ring = Self::ring_for_radius(tx.hypot(ty));
-                        let cmd_squad = if garrison_ready {
-                            0
-                        } else {
-                            active_squad_opt.unwrap_or(0)
-                        };
-                        let should_log_rally = cmd_squad == 0 && garrison_ready;
-                        let _ = self.apply_command(
-                            pid,
-                            ClientMessage::ArmyCommand {
-                                squad: cmd_squad,
-                                mode: 1,
-                                target_x: tx,
-                                target_y: ty,
-                            },
-                        );
-                        if should_log_rally {
-                            if let Some(tlog) = self.telemetry.as_mut() {
-                                let sec =
-                                    self.tick as f32 / f32::from(self.config.world.tick_rate.max(1));
-                                tlog.log_milestone(
-                                    self.tick,
-                                    sec,
-                                    pid,
-                                    "bot_rally",
-                                    json!({"tier": tier, "arch": arch, "from_ring": from_ring, "to_ring": to_ring, "units": garrison_count}),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-
-            intel_map.insert(pid, bot_intel);
-        }
     }
 
     fn step_zone_repulsion(&mut self, dt: f32) {
@@ -3676,7 +2662,7 @@ impl World {
 
                 if u.owner_id != 0 && target_unit.is_none() && (strict_manual || !hold_course) {
                     let b_search_r = if strict_manual {
-                        (if is_ranged { attack_range } else { my_r + 3.0 }) + 28.0
+                        (if is_ranged { attack_range } else { my_r + 6.0 }) + 32.0
                     } else {
                         aggro_r
                     };
@@ -3691,7 +2677,7 @@ impl World {
                         }
                         if strict_manual {
                             let d_edge = (bx - u.x).hypot(by - u.y);
-                            let hit_d = if is_ranged { attack_range + br } else { my_r + br + 3.0 };
+                            let hit_d = if is_ranged { attack_range + br } else { my_r + br + 6.0 };
                             if d_edge > hit_d {
                                 continue;
                             }
@@ -3757,7 +2743,7 @@ impl World {
                 let dx = bx - u.x;
                 let dy = by - u.y;
                 let dist = dx.hypot(dy);
-                let hit_dist = if is_ranged { attack_range + br } else { my_r + br + 3.0 };
+                let hit_dist = if is_ranged { attack_range + br } else { my_r + br + 6.0 };
                 if dist <= hit_dist {
                     if u.attack_cooldown_left <= 0.0 {
                         let b_dmg = if u.kind == 0 && (bkind == 1 || bkind == 5) {
@@ -3899,12 +2885,14 @@ impl World {
                     u.x = bx + nx * min_b_dist;
                     u.y = by + ny * min_b_dist;
 
-                    let bounce = if u.kind == 2 { 155.0 } else { 240.0 };
-                    let radial_kb = u.knockback_vx * nx + u.knockback_vy * ny;
-                    if radial_kb < bounce {
-                        let add = bounce - radial_kb;
-                        u.knockback_vx += nx * add;
-                        u.knockback_vy += ny * add;
+                    if !strict_manual {
+                        let bounce = if u.kind == 2 { 155.0 } else { 240.0 };
+                        let radial_kb = u.knockback_vx * nx + u.knockback_vy * ny;
+                        if radial_kb < bounce {
+                            let add = bounce - radial_kb;
+                            u.knockback_vx += nx * add;
+                            u.knockback_vy += ny * add;
+                        }
                     }
                 }
             }
@@ -4126,7 +3114,7 @@ impl World {
                             rel_x: b.rel_x,
                             rel_y: b.rel_y,
                             radius: br + 14.0,
-                            expires_at_sec: now_sec + 8.0,
+                            expires_at_sec: now_sec + 20.0,
                         },
                     ));
                     affected_cap_owners.insert(b.owner_id);
