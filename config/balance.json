@@ -172,7 +172,7 @@
           "damage": 0.0,
           "range": 0.0,
           "projectile_speed": 0.0,
-          "spawn_interval_sec": 4.2,
+          "spawn_interval_sec": 1.0,
           "unit_cap_bonus": 3
         },
         {
@@ -184,7 +184,7 @@
           "damage": 0.0,
           "range": 0.0,
           "projectile_speed": 0.0,
-          "spawn_interval_sec": 3.4,
+          "spawn_interval_sec": 0.8,
           "unit_cap_bonus": 4
         },
         {
@@ -196,7 +196,7 @@
           "damage": 0.0,
           "range": 0.0,
           "projectile_speed": 0.0,
-          "spawn_interval_sec": 2.6,
+          "spawn_interval_sec": 0.6,
           "unit_cap_bonus": 6
         }
       ],

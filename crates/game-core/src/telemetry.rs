@@ -48,6 +48,19 @@ impl TelemetryLogger {
                 fs::create_dir_all(parent)?;
             }
         }
+        // Auto-rotate existing live.jsonl so previous human sessions are never overwritten on restart
+        if path.file_name().and_then(|n| n.to_str()) == Some("live.jsonl") {
+            if let Ok(meta) = fs::metadata(path) {
+                if meta.len() > 0 {
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let archived = path.with_file_name(format!("live_{ts}.jsonl"));
+                    let _ = fs::rename(path, archived);
+                }
+            }
+        }
         let file = File::create(path)?;
         let snapshot_interval_ticks = u32::from(tick_rate.max(1)) * 5;
         Ok(Self {

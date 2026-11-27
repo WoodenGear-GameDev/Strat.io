@@ -108,9 +108,9 @@ export const DEFAULT_BALANCE: BalanceConfig = {
       name: "Дроны",
       radius: 28,
       levels: [
-        { cost: 90, trophy_cost: 0, hp: 420, spawn_interval_sec: 4.2, unit_cap_bonus: 3 },
-        { cost: 210, trophy_cost: 0, hp: 700, spawn_interval_sec: 3.4, unit_cap_bonus: 4 },
-        { cost: 450, trophy_cost: 0, hp: 1100, spawn_interval_sec: 2.6, unit_cap_bonus: 6 },
+        { cost: 90, trophy_cost: 0, hp: 420, spawn_interval_sec: 1.0, unit_cap_bonus: 3 },
+        { cost: 210, trophy_cost: 0, hp: 700, spawn_interval_sec: 0.8, unit_cap_bonus: 4 },
+        { cost: 450, trophy_cost: 0, hp: 1100, spawn_interval_sec: 0.6, unit_cap_bonus: 6 },
       ],
     },
     beacon: {
