@@ -1,0 +1,7 @@
+[package]
+name = "game-wasm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+game-core = { path = "../game-core" }

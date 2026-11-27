@@ -1,0 +1,10 @@
+target/
+node_modules/
+client/dist/
+*.db
+*.db-shm
+*.db-wal
+.env
+logs/
+*.jsonl
+etc/

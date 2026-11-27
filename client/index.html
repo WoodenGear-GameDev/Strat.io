@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0f141c" />
+    <title>Stratio</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Lobby Overlay -->
+    <div id="lobby-overlay" class="overlay">
+      <div class="card lobby-card">
+        <div class="brand-header">
+          <div class="brand-emblem" aria-hidden="true">
+            <svg viewBox="0 0 48 48" width="42" height="42" fill="none">
+              <circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="2" stroke-dasharray="6 4" opacity="0.55" />
+              <polygon points="24,8 37.8,16 37.8,32 24,40 10.2,32 10.2,16" fill="currentColor" fill-opacity="0.16" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" />
+              <circle cx="24" cy="24" r="5" fill="#ffd166" />
+            </svg>
+          </div>
+          <h1>STRATIO</h1>
+          <p class="subtitle">Орбитальная стратегия в реальном времени</p>
+        </div>
+
+        <div id="account-bar" class="account-bar hidden">
+          <div class="account-identity">
+            <span class="account-avatar" id="account-avatar" aria-hidden="true">S</span>
+            <div class="account-meta">
+              <span class="account-label">Командир</span>
+              <strong id="account-username"></strong>
+            </div>
+          </div>
+          <div class="account-actions">
+            <button id="open-profile-btn" class="tonal-btn sm-btn">Профиль</button>
+            <button id="logout-btn" class="tonal-btn danger-tonal sm-btn">Выйти</button>
+          </div>
+        </div>
+
+        <div class="field-wrap" id="guest-name-wrap">
+          <input
+            id="player-name"
+            type="text"
+            maxlength="24"
+            placeholder="Введите ник (гость)"
+            autocomplete="off"
+          />
+        </div>
+
+        <button id="play-btn" class="primary-btn play-cta">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 5.14v13.72a1 1 0 0 0 1.52.85l11.1-6.86a1 1 0 0 0 0-1.7L9.52 4.29A1 1 0 0 0 8 5.14z" fill="currentColor" />
+          </svg>
+          <span>В бой</span>
+        </button>
+
+        <div class="lobby-row">
+          <button id="open-auth-btn" class="secondary-btn">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2" />
+              <path d="M4.5 20a7.5 7.5 0 0 1 15 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+            <span>Войти / Регистрация</span>
+          </button>
+          <button id="open-lb-btn" class="secondary-btn">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7 4h10v5a5 5 0 0 1-10 0V4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+              <path d="M7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3M12 14v5M8 19h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+            <span>Лидерборд</span>
+          </button>
+        </div>
+        <div id="lobby-status" class="status-text"></div>
+      </div>
+    </div>
+
+    <!-- In-Game HUD -->
+    <div id="hud-overlay" class="hud hidden">
+      <!-- Top-Left: Energy, Level + XP Progress, Army -->
+      <div class="hud-top-left panel hud-vitals">
+        <div class="vitals-row">
+          <div class="metric-chip energy-chip" title="Энергия">
+            <span class="metric-icon energy-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M13 2L4.5 13.5H11L10 22l9.5-11.5H13L13 2z" fill="currentColor" /></svg>
+            </span>
+            <div class="metric-body">
+              <span class="metric-label">Энергия</span>
+              <strong id="hud-energy" class="metric-value">0</strong>
+            </div>
+          </div>
+
+          <div class="metric-chip trophy-chip" title="Трофеи (добываются в бою — нужны для Ядра)">
+            <span class="metric-icon trophy-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M14.5 4l5.5 5.5-8.5 8.5L6 12.5 14.5 4zM6 12.5L4 20l7.5-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+              </svg>
+            </span>
+            <div class="metric-body">
+              <span class="metric-label">Трофеи</span>
+              <strong id="hud-trophies" class="metric-value">0</strong>
+            </div>
+          </div>
+
+          <div class="metric-chip army-chip" title="Армия">
+            <span class="metric-icon army-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <circle cx="9" cy="8.5" r="3" fill="none" stroke="currentColor" stroke-width="2" />
+                <circle cx="16.5" cy="9.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8" />
+                <path d="M3.5 19a5.5 5.5 0 0 1 11 0M14.5 19a4 4 0 0 1 6 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </span>
+            <div class="metric-body">
+              <span class="metric-label">Армия</span>
+              <strong id="hud-units" class="metric-value">0 / 0</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="hq-status-row">
+          <button id="hud-hq-btn" class="lvl-pill hq-lvl-btn" title="Выбрать / улучшить Ядро">
+            <svg viewBox="0 0 24 24" class="icon-xs" aria-hidden="true">
+              <polygon points="12,3 20,7.5 20,16.5 12,21 4,16.5 4,7.5" fill="currentColor" />
+            </svg>
+            <span>Ядро Ур. <strong id="hud-hq-level">1</strong></span>
+            <span id="hud-hq-ready" class="hq-ready-tag hidden">⬆ Ур.</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Top-Right: Compact Match Top + Debug Pill Toggle -->
+      <div class="hud-top-right">
+        <div class="panel lb-panel">
+          <div class="panel-header">
+            <span class="panel-title">
+              <svg class="icon-sm trophy-tint" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 4h10v5a5 5 0 0 1-10 0V4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                <path d="M7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3M12 14v5M8 19h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+              <span>Топ матча</span>
+            </span>
+            <button id="debug-toggle-btn" class="pill-toggle" title="Отладка" aria-pressed="false">
+              <span class="pill-dot"></span>
+              <span>DBG</span>
+            </button>
+          </div>
+          <ol id="hud-leaderboard" class="lb-list"></ol>
+        </div>
+
+        <div id="debug-panel" class="panel debug-panel hidden">
+          <div class="debug-grid">
+            <span class="dbg-item">FPS <strong id="hud-fps">0</strong></span>
+            <span class="dbg-item">TPS <strong id="hud-tps">0</strong></span>
+            <span class="dbg-item">Ping <strong id="hud-ping">0</strong> мс</span>
+            <span class="dbg-item">Тик <strong id="hud-tick">0</strong></span>
+            <span class="dbg-item">Сущн. <strong id="hud-entities">0</strong></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Toast Notification -->
+      <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+      <!-- Bottom-Center Contextual: Touch Teleport Confirm Bar -->
+      <div id="confirm-bar" class="panel confirm-bar hidden">
+        <button id="confirm-ok-btn" class="action-btn confirm-primary">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 13l4 4L19 7" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span id="confirm-ok-label">Подтвердить</span>
+        </button>
+        <button id="confirm-cancel-btn" class="action-btn danger-tonal icon-only-btn" title="Отмена">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Bottom-Center Contextual: Selected Building Card -->
+      <div id="building-card" class="panel building-card hidden">
+        <div class="building-head">
+          <div class="building-title">
+            <strong id="bcard-name">Здание</strong>
+            <span id="bcard-level" class="lvl-tag">Ур. 1</span>
+          </div>
+          <button id="bcard-close" class="icon-close-btn" title="Закрыть">
+            <svg class="icon-sm" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+        <div class="bcard-hp-row">
+          <div class="bcard-hp-track">
+            <div id="bcard-hp-fill" class="bcard-hp-fill" style="width: 100%"></div>
+          </div>
+          <span id="bcard-hp-text" class="bcard-hp-text"></span>
+        </div>
+        <div id="bcard-barracks" class="bcard-barracks hidden">
+          <button id="bcard-barracks-pause" class="action-btn barracks-pause-btn">⏸ Пауза</button>
+          <div class="barracks-units-row">
+            <button id="bcard-unit-0" class="action-btn barracks-unit-btn" data-unit="0">Рейдер</button>
+            <button id="bcard-unit-1" class="action-btn barracks-unit-btn" data-unit="1">Стрелок</button>
+            <button id="bcard-unit-2" class="action-btn barracks-unit-btn" data-unit="2">Титан</button>
+          </div>
+        </div>
+        <div class="building-actions">
+          <button id="bcard-upgrade" class="action-btn upgrade-btn">
+            <svg class="icon-sm" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span id="bcard-upgrade-label">Улучшить</span>
+          </button>
+          <button id="bcard-sell" class="action-btn danger-tonal">
+            <svg class="icon-sm" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span id="bcard-sell-label">Продать</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Bottom-Center Contextual: Squad Focus Strip -->
+      <div id="squad-bar" class="squad-bar" aria-label="Отряды дронов"></div>
+
+      <!-- Bottom Floating Dock -->
+      <div class="hud-bottom">
+        <div class="panel toolbar" role="toolbar" aria-label="Панель управления">
+          <button class="tool-btn build-btn" data-kind="1" title="Генератор [1]">
+            <span class="hotkey">1</span>
+            <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2" />
+              <polygon points="12,6.5 16,12 12,17.5 8,12" fill="currentColor" />
+            </svg>
+            <span class="tool-name">Генератор</span>
+            <small class="tool-cost"><span id="cost-1">—</span></small>
+          </button>
+
+          <button class="tool-btn build-btn" data-kind="2" title="Турель [2]">
+            <span class="hotkey">2</span>
+            <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="10.5" cy="12" r="6.5" fill="none" stroke="currentColor" stroke-width="2.4" />
+              <path d="M15.5 9.5h6v5h-6" fill="currentColor" opacity="0.9" />
+              <circle cx="10.5" cy="12" r="2.2" fill="currentColor" />
+            </svg>
+            <span class="tool-name">Турель</span>
+            <small class="tool-cost"><span id="cost-2">—</span></small>
+          </button>
+
+          <button class="tool-btn build-btn" data-kind="3" title="Дроны [3]">
+            <span class="hotkey">3</span>
+            <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="12,3.5 20.5,12 12,20.5 3.5,12" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+              <path d="M9.5 13.5L12 10.5l2.5 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span class="tool-name">Дроны</span>
+            <small class="tool-cost"><span id="cost-3">—</span></small>
+          </button>
+
+          <button class="tool-btn build-btn" data-kind="5" title="Маяк [4]">
+            <span class="hotkey">4</span>
+            <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="12,4.5 19.5,18.5 4.5,18.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+              <circle cx="12" cy="14" r="2" fill="currentColor" />
+            </svg>
+            <span class="tool-name">Маяк</span>
+            <small class="tool-cost"><span id="cost-5">—</span></small>
+          </button>
+
+          <button id="btn-action-upgrade" class="tool-btn cmd-btn action-upgrade-btn" title="Улучшение по клику [U]">
+            <span class="hotkey">U</span>
+            <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span class="tool-name">Улучшить</span>
+          </button>
+
+          <button id="btn-action-sell" class="tool-btn cmd-btn action-sell-btn" title="Снос по клику [X]">
+            <span class="hotkey">X</span>
+            <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span class="tool-name">Снести</span>
+          </button>
+
+          <div class="sep" aria-hidden="true"></div>
+
+          <button id="btn-teleport" class="tool-btn cmd-btn warp-btn" title="Телепорт зоны [T]">
+            <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-dasharray="10 4" />
+              <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2" />
+              <circle cx="12" cy="12" r="1.4" fill="currentColor" />
+            </svg>
+            <span id="teleport-label" class="tool-name">Телепорт</span>
+          </button>
+
+          <div class="sep" aria-hidden="true"></div>
+
+          <button id="btn-center" class="tool-btn cam-btn" title="Камера: Ядро / Отряды [Пробел / Tab]">
+            <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2" />
+              <path d="M12 3v3M12 18v3M3 12h3M18 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+            <span id="cam-anchor-label" class="tool-name">Ядро</span>
+          </button>
+
+          <button id="btn-zoom-in" class="tool-btn cam-btn icon-only-tool" title="Приблизить">
+            <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 6v12M6 12h12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
+            </svg>
+          </button>
+
+          <button id="btn-zoom-out" class="tool-btn cam-btn icon-only-tool" title="Отдалить">
+            <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 12h12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
+            </svg>
+          </button>
+
+          <button id="btn-cancel" class="tool-btn danger-tonal cancel-btn" disabled title="Отмена [Esc]">
+            <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
+            </svg>
+            <span class="tool-name">Отмена</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- GameOver Overlay -->
+    <div id="gameover-overlay" class="overlay hidden">
+      <div class="card gameover-card">
+        <div class="gameover-emblem" aria-hidden="true">
+          <svg viewBox="0 0 48 48" width="44" height="44" fill="none">
+            <polygon points="24,6 40,15 40,33 24,42 8,33 8,15" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" />
+            <path d="M18 18l12 12M30 18L18 30" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" />
+          </svg>
+        </div>
+        <h2>Ядро уничтожено</h2>
+        <p class="subtitle">Итоги орбитального сражения</p>
+        <div class="gameover-metrics">
+          <div class="go-tile">
+            <span>Очки</span>
+            <strong id="go-score">0</strong>
+          </div>
+          <div class="go-tile">
+            <span>Время жизни</span>
+            <strong id="go-time">0 с</strong>
+          </div>
+          <div class="go-tile">
+            <span>Убито юнитов</span>
+            <strong id="go-kills">0</strong>
+          </div>
+          <div class="go-tile">
+            <span>Снесено зданий</span>
+            <strong id="go-buildings">0</strong>
+          </div>
+        </div>
+        <button id="replay-btn" class="primary-btn">Играть снова</button>
+        <button id="go-lobby-btn" class="secondary-btn">В лобби</button>
+      </div>
+    </div>
+
+    <!-- Auth Modal -->
+    <div id="auth-modal" class="overlay hidden">
+      <div class="card modal-card">
+        <div class="modal-header">
+          <div class="tabs segmented-tabs">
+            <button id="tab-login" class="tab-btn active">Вход</button>
+            <button id="tab-register" class="tab-btn">Регистрация</button>
+          </div>
+          <button id="auth-close-btn" class="icon-close-btn" title="Закрыть">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+        <input id="auth-email" type="email" placeholder="Email" autocomplete="email" />
+        <input
+          id="auth-username"
+          type="text"
+          maxlength="24"
+          placeholder="Никнейм"
+          class="hidden"
+          autocomplete="username"
+        />
+        <input
+          id="auth-password"
+          type="password"
+          placeholder="Пароль (мин. 6 символов)"
+          autocomplete="current-password"
+        />
+        <button id="auth-submit-btn" class="primary-btn">Войти</button>
+        <div id="auth-error" class="error-text"></div>
+      </div>
+    </div>
+
+    <!-- Profile Modal -->
+    <div id="profile-modal" class="overlay hidden">
+      <div class="card modal-card wide-card">
+        <div class="modal-header">
+          <h3 id="profile-title">Профиль</h3>
+          <button id="profile-close-btn" class="icon-close-btn" title="Закрыть">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+        <div id="profile-content" class="modal-scroll">Загрузка...</div>
+      </div>
+    </div>
+
+    <!-- Global Leaderboard Modal -->
+    <div id="lb-modal" class="overlay hidden">
+      <div class="card modal-card wide-card">
+        <div class="modal-header">
+          <div class="modal-title-row">
+            <svg class="icon trophy-tint" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7 4h10v5a5 5 0 0 1-10 0V4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+              <path d="M7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3M12 14v5M8 19h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+            <h3>Глобальный лидерборд</h3>
+          </div>
+          <button id="lb-close-btn" class="icon-close-btn" title="Закрыть">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+        <div class="tabs filter-chips">
+          <button class="tab-btn lb-sort-btn active" data-sort="best_score">Рекорд</button>
+          <button class="tab-btn lb-sort-btn" data-sort="total_kills">Убийства</button>
+          <button class="tab-btn lb-sort-btn" data-sort="total_score">Всего очков</button>
+        </div>
+        <div id="lb-content" class="modal-scroll">Загрузка...</div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

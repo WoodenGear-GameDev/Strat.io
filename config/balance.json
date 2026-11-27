@@ -1,0 +1,260 @@
+{
+  "world": {
+    "map_radius": 3200.0,
+    "tick_rate": 20,
+    "spawn_protection_sec": 40.0,
+    "zone_base_radius": 95.0,
+    "zone_repulsion_strength": 120.0,
+    "sell_refund_ratio": 0.75,
+    "starting_energy": 140.0,
+    "core_radius": 280.0,
+    "core_push_strength": 28.0,
+    "teleport_base_cost": 150.0,
+    "teleport_dist_factor": 0.11,
+    "teleport_ring_penalty": 0.30,
+    "teleport_cooldown_sec": 32.0,
+    "bot_count": 8
+  },
+  "buildings": {
+    "hq": {
+      "kind_id": 0,
+      "name": "Ядро",
+      "radius": 28.0,
+      "max_per_player": 1,
+      "levels": [
+        {
+          "cost": 0.0,
+          "trophy_cost": 0.0,
+          "energy_cap": 400.0,
+          "trophy_cap": 200.0,
+          "hp": 1800,
+          "income_per_sec": 3.0,
+          "fire_rate": 0.0,
+          "damage": 0.0,
+          "range": 0.0,
+          "projectile_speed": 0.0,
+          "spawn_interval_sec": 0.0,
+          "unit_cap_bonus": 6
+        },
+        {
+          "cost": 0.0,
+          "trophy_cost": 120.0,
+          "energy_cap": 950.0,
+          "trophy_cap": 420.0,
+          "hp": 3200,
+          "income_per_sec": 5.0,
+          "fire_rate": 0.0,
+          "damage": 0.0,
+          "range": 0.0,
+          "projectile_speed": 0.0,
+          "spawn_interval_sec": 0.0,
+          "unit_cap_bonus": 14
+        },
+        {
+          "cost": 0.0,
+          "trophy_cost": 320.0,
+          "energy_cap": 2000.0,
+          "trophy_cap": 600.0,
+          "hp": 5000,
+          "income_per_sec": 8.0,
+          "fire_rate": 0.0,
+          "damage": 0.0,
+          "range": 0.0,
+          "projectile_speed": 0.0,
+          "spawn_interval_sec": 0.0,
+          "unit_cap_bonus": 24
+        }
+      ],
+      "effects": {}
+    },
+    "generator": {
+      "kind_id": 1,
+      "name": "Генератор",
+      "radius": 20.0,
+      "levels": [
+        {
+          "cost": 50.0,
+          "hp": 350,
+          "income_per_sec": 4.5,
+          "fire_rate": 0.0,
+          "damage": 0.0,
+          "range": 0.0,
+          "projectile_speed": 0.0,
+          "spawn_interval_sec": 0.0,
+          "unit_cap_bonus": 0
+        },
+        {
+          "cost": 120.0,
+          "hp": 480,
+          "income_per_sec": 9.5,
+          "fire_rate": 0.0,
+          "damage": 0.0,
+          "range": 0.0,
+          "projectile_speed": 0.0,
+          "spawn_interval_sec": 0.0,
+          "unit_cap_bonus": 0
+        },
+        {
+          "cost": 260.0,
+          "hp": 750,
+          "income_per_sec": 17.0,
+          "fire_rate": 0.0,
+          "damage": 0.0,
+          "range": 0.0,
+          "projectile_speed": 0.0,
+          "spawn_interval_sec": 0.0,
+          "unit_cap_bonus": 0
+        }
+      ],
+      "effects": {
+        "aura_radius": 140.0,
+        "fire_rate_mult": 1.18
+      }
+    },
+    "turret": {
+      "kind_id": 2,
+      "name": "Турель",
+      "radius": 28.0,
+      "levels": [
+        {
+          "cost": 70.0,
+          "trophy_cost": 0.0,
+          "hp": 520,
+          "income_per_sec": 0.0,
+          "fire_rate": 1.35,
+          "damage": 20.0,
+          "range": 250.0,
+          "projectile_speed": 620.0,
+          "spawn_interval_sec": 0.0,
+          "unit_cap_bonus": 0
+        },
+        {
+          "cost": 160.0,
+          "trophy_cost": 0.0,
+          "hp": 950,
+          "income_per_sec": 0.0,
+          "fire_rate": 1.65,
+          "damage": 28.0,
+          "range": 285.0,
+          "projectile_speed": 660.0,
+          "spawn_interval_sec": 0.0,
+          "unit_cap_bonus": 0
+        },
+        {
+          "cost": 360.0,
+          "trophy_cost": 0.0,
+          "hp": 1650,
+          "income_per_sec": 0.0,
+          "fire_rate": 1.95,
+          "damage": 42.0,
+          "range": 325.0,
+          "projectile_speed": 700.0,
+          "spawn_interval_sec": 0.0,
+          "unit_cap_bonus": 0
+        }
+      ],
+      "effects": {}
+    },
+    "barracks": {
+      "kind_id": 3,
+      "name": "Дроны",
+      "radius": 28.0,
+      "levels": [
+        {
+          "cost": 90.0,
+          "trophy_cost": 0.0,
+          "hp": 420,
+          "income_per_sec": 0.0,
+          "fire_rate": 0.0,
+          "damage": 0.0,
+          "range": 0.0,
+          "projectile_speed": 0.0,
+          "spawn_interval_sec": 4.2,
+          "unit_cap_bonus": 1,
+          "local_supply_cap": 3
+        },
+        {
+          "cost": 210.0,
+          "trophy_cost": 0.0,
+          "hp": 700,
+          "income_per_sec": 0.0,
+          "fire_rate": 0.0,
+          "damage": 0.0,
+          "range": 0.0,
+          "projectile_speed": 0.0,
+          "spawn_interval_sec": 3.4,
+          "unit_cap_bonus": 2,
+          "local_supply_cap": 4
+        },
+        {
+          "cost": 450.0,
+          "trophy_cost": 0.0,
+          "hp": 1100,
+          "income_per_sec": 0.0,
+          "fire_rate": 0.0,
+          "damage": 0.0,
+          "range": 0.0,
+          "projectile_speed": 0.0,
+          "spawn_interval_sec": 2.6,
+          "unit_cap_bonus": 3,
+          "local_supply_cap": 6
+        }
+      ],
+      "effects": {}
+    },
+    "beacon": {
+      "kind_id": 5,
+      "name": "Маяк",
+      "radius": 20.0,
+      "levels": [
+        { "cost": 130.0, "trophy_cost": 90.0, "hp": 450 },
+        { "cost": 280.0, "trophy_cost": 180.0, "hp": 750 },
+        { "cost": 520.0, "trophy_cost": 340.0, "hp": 1100 }
+      ],
+      "effects": {
+        "zone_radius_bonus": 56.0
+      }
+    }
+  },
+  "units": {
+    "raider": {
+      "kind_id": 0,
+      "name": "Рейдер",
+      "cost": 14.0,
+      "radius": 8.5,
+      "hp": 78.0,
+      "damage": 13.0,
+      "attack_cooldown_sec": 0.55,
+      "speed": 235.0,
+      "range": 0.0,
+      "aggro_range": 290.0,
+      "supply_cost": 1
+    },
+    "archer": {
+      "kind_id": 1,
+      "name": "Стрелок",
+      "cost": 24.0,
+      "radius": 9.5,
+      "hp": 44.0,
+      "damage": 15.0,
+      "attack_cooldown_sec": 0.90,
+      "speed": 158.0,
+      "range": 175.0,
+      "aggro_range": 300.0,
+      "supply_cost": 1
+    },
+    "titan": {
+      "kind_id": 2,
+      "name": "Титан",
+      "cost": 65.0,
+      "radius": 14.0,
+      "hp": 540.0,
+      "damage": 40.0,
+      "attack_cooldown_sec": 0.95,
+      "speed": 128.0,
+      "range": 0.0,
+      "aggro_range": 280.0,
+      "supply_cost": 3
+    }
+  }
+}
