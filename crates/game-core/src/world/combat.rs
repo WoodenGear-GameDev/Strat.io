@@ -68,6 +68,11 @@ impl World {
                 // (target_id, target_idx, is_building, tx, ty)
                 let mut target_info: Option<(EntityId, usize, bool, f32, f32)> = None;
 
+                // 1. Immediate self-defense: enemy units right on our base perimeter or point-blank to this turret
+                let close_zone_r2 = (zone.radius + 55.0) * (zone.radius + 55.0);
+                let close_turret_r2 = 105.0 * 105.0;
+                let mut urgent_hp = u16::MAX;
+                let mut urgent_d2 = base_range * base_range;
                 unit_grid.for_each_in_radius(bx, by, base_range, |ui, ux, uy, d2| {
                     let u = &units[ui];
                     if u.owner_id == owner_id || u.hp == 0 {
@@ -76,7 +81,12 @@ impl World {
                     if u32::from(u.hp) <= incoming_dmg.get(&u.id).copied().unwrap_or(0) {
                         return;
                     }
-                    if !(u.hp < best_hp || (u.hp == best_hp && d2 < best_dist2)) {
+                    let zdx = ux - zone.x;
+                    let zdy = uy - zone.y;
+                    if d2 > close_turret_r2 && (zdx * zdx + zdy * zdy) > close_zone_r2 {
+                        return;
+                    }
+                    if !(u.hp < urgent_hp || (u.hp == urgent_hp && d2 < urgent_d2)) {
                         return;
                     }
                     if u.owner_id != 0
@@ -86,11 +96,65 @@ impl World {
                     {
                         return;
                     }
-                    best_hp = u.hp;
-                    best_dist2 = d2;
+                    urgent_hp = u.hp;
+                    urgent_d2 = d2;
                     target_info = Some((u.id, ui, false, ux, uy));
                 });
 
+                // 2. Siege priority: enemy HQ (kind=0) or enemy Turret (kind=2) in range takes priority over passing drones
+                if target_info.is_none() {
+                    let mut best_siege_prio: u8 = u8::MAX;
+                    let mut best_siege_d2 = base_range * base_range;
+                    building_grid.for_each_in_radius(bx, by, base_range, |bi, tx, ty, d2| {
+                        let Some((bid, b_owner, _, _, _, bhp, bkind)) = building_snap[bi] else {
+                            return;
+                        };
+                        if b_owner == owner_id || bhp == 0 || (bkind != 0 && bkind != 2) {
+                            return;
+                        }
+                        let prio: u8 = if bkind == 0 { 0 } else { 1 };
+                        if prio > best_siege_prio || (prio == best_siege_prio && d2 >= best_siege_d2) {
+                            return;
+                        }
+                        if players
+                            .get(&b_owner)
+                            .is_some_and(|p| p.spawn_protection_left > 0.0)
+                        {
+                            return;
+                        }
+                        best_siege_prio = prio;
+                        best_siege_d2 = d2;
+                        target_info = Some((bid, bi, true, tx, ty));
+                    });
+                }
+
+                // 3. Standard anti-unit targeting (lowest HP with overkill protection)
+                if target_info.is_none() {
+                    unit_grid.for_each_in_radius(bx, by, base_range, |ui, ux, uy, d2| {
+                        let u = &units[ui];
+                        if u.owner_id == owner_id || u.hp == 0 {
+                            return;
+                        }
+                        if u32::from(u.hp) <= incoming_dmg.get(&u.id).copied().unwrap_or(0) {
+                            return;
+                        }
+                        if !(u.hp < best_hp || (u.hp == best_hp && d2 < best_dist2)) {
+                            return;
+                        }
+                        if u.owner_id != 0
+                            && players
+                                .get(&u.owner_id)
+                                .is_some_and(|p| p.spawn_protection_left > 0.0)
+                        {
+                            return;
+                        }
+                        best_hp = u.hp;
+                        best_dist2 = d2;
+                        target_info = Some((u.id, ui, false, ux, uy));
+                    });
+                }
+
+                // 4. Fallback: any remaining enemy building in range
                 if target_info.is_none() {
                     building_grid.for_each_in_radius(bx, by, base_range, |bi, tx, ty, d2| {
                         if d2 > best_dist2 {

@@ -153,20 +153,20 @@ fn archetype_profile(arch: u8, tier: u8) -> ArchetypeProfile {
             extra_turrets: false,
             desired_beacons: 3,
         },
-        // 4: Архитектор — застройщик, маяки, крепкая база
+        // 4: Архитектор — чисто турельный осадник (генераторы + турели, минимум казарм, телепорт в упор)
         _ => ArchetypeProfile {
-            wave_min: 7,
-            wave_cap_pct: 85,
-            scout_min: 3,
-            min_win_ratio: 0.85,
+            wave_min: 3,
+            wave_cap_pct: 50,
+            scout_min: 2,
+            min_win_ratio: 0.78,
             crown_mult: if tier == 3 { 1.65 } else { 1.25 },
-            finisher_mult: 2.1,
-            exposed_mult: 1.55,
+            finisher_mult: 2.5,
+            exposed_mult: 1.85,
             gen_loot_weight: 0.28,
-            dist_bias: 150.0,
-            uses_reinforce: true,
-            uses_tactical_tp: false,
-            extra_gens: 1,
+            dist_bias: 160.0,
+            uses_reinforce: false,
+            uses_tactical_tp: true,
+            extra_gens: 2,
             extra_turrets: true,
             desired_beacons: 4,
         },
@@ -476,6 +476,7 @@ impl World {
     fn bot_try_tactical_teleport(
         &mut self,
         pid: PlayerId,
+        arch: u8,
         own_z: &Zone,
         own_r: f32,
         intel: &BotPlayerIntel,
@@ -485,7 +486,8 @@ impl World {
         let Some(p) = self.players.get(&pid) else {
             return false;
         };
-        if p.teleport_cooldown_left > 0.0 || p.energy < 220.0 {
+        let min_tp_e = if arch == 4 { 550.0 } else { 220.0 };
+        if p.teleport_cooldown_left > 0.0 || p.energy < min_tp_e {
             return false;
         }
         let min_ring_r = match intel.hq_lvl {
@@ -494,17 +496,31 @@ impl World {
             _ => own_z.radius + 120.0,
         };
 
-        // 1. Tactical forward jump toward a distant target (>850px away) if a drone gives vision near it
+        // 1. Tactical forward jump:
+        //    - Architect (arch=4, turret siege): jumps into turret firing distance (360..580px from target center)
+        //      once armed with >=6 turrets in Ring 3.
+        //    - Other archetypes: jumps toward distant targets (>850px away).
         if allow_tactical {
             if let Some((tx, ty)) = desired_target {
                 let dtx = tx - own_z.x;
                 let dty = ty - own_z.y;
-                if dtx * dtx + dty * dty > 850.0 * 850.0 {
+                let cur_d2 = dtx * dtx + dty * dty;
+                let min_jump_trigger = if arch == 4 && intel.hq_lvl >= 3 && intel.turrets >= 6 {
+                    580.0
+                } else {
+                    850.0
+                };
+                if cur_d2 > min_jump_trigger * min_jump_trigger {
+                    let (min_e_dist, max_e_dist) = if arch == 4 {
+                        (340.0_f32, 570.0_f32)
+                    } else {
+                        (280.0_f32, 560.0_f32)
+                    };
                     for &(dx, dy) in intel.squad_unit_positions.iter().step_by(2) {
                         let ex = dx - tx;
                         let ey = dy - ty;
                         let e2 = ex * ex + ey * ey;
-                        if (280.0 * 280.0..=560.0 * 560.0).contains(&e2)
+                        if (min_e_dist * min_e_dist..=max_e_dist * max_e_dist).contains(&e2)
                             && self.bot_try_teleport_to_point(pid, own_z, intel, dx, dy, min_ring_r)
                         {
                             return true;
@@ -860,7 +876,11 @@ impl World {
                     },
                 ))
             } else if free_hexes > 0 {
-                let want_turret = intel.turrets * turret_ratio < intel.barracks;
+                let want_turret = if arch == 4 {
+                    intel.barracks >= 2
+                } else {
+                    intel.turrets * turret_ratio < intel.barracks
+                };
                 Some((if want_turret { 2 } else { 3 }, 94.0))
             } else if free_rhombuses > 0 {
                 Some((1, 72.0))
@@ -1150,12 +1170,18 @@ impl World {
         } else {
             profile.min_win_ratio
         };
-        let active_combat_power = if garrison_ready {
+        let base_army_power = if garrison_ready {
             bot_intel
                 .defending_unit_power
                 .max(bot_intel.own_combat_power * 0.65)
         } else {
             bot_intel.own_combat_power
+        };
+        // Architect (turret siege build) evaluates assault strength from its turrets rather than mass drones
+        let active_combat_power = if arch == 4 {
+            base_army_power + bot_intel.turret_power * 0.75
+        } else {
+            base_army_power
         };
 
         let mut best_target: Option<(f32, f32)> = None;
@@ -1537,6 +1563,7 @@ impl World {
             // 5. Honest vision-based tactical teleport (ring upgrade or forward jump)
             let _ = self.bot_try_tactical_teleport(
                 pid,
+                arch,
                 &own_z,
                 own_r,
                 &bot_intel,

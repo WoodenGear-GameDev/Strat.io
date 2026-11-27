@@ -78,8 +78,8 @@ export const DEFAULT_BALANCE: BalanceConfig = {
       max_per_player: 1,
       levels: [
         { cost: 0, trophy_cost: 0, energy_cap: 400, trophy_cap: 200, hp: 1800, income_per_sec: 3.0, unit_cap_bonus: 6 },
-        { cost: 0, trophy_cost: 120, energy_cap: 950, trophy_cap: 420, hp: 3200, income_per_sec: 5.0, unit_cap_bonus: 14 },
-        { cost: 0, trophy_cost: 320, energy_cap: 2000, trophy_cap: 600, hp: 5000, income_per_sec: 8.0, unit_cap_bonus: 24 },
+        { cost: 0, trophy_cost: 85, energy_cap: 950, trophy_cap: 420, hp: 3200, income_per_sec: 5.0, unit_cap_bonus: 14 },
+        { cost: 0, trophy_cost: 320, energy_cap: 2000, trophy_cap: 600, hp: 3800, income_per_sec: 8.0, unit_cap_bonus: 24 },
       ],
     },
     generator: {

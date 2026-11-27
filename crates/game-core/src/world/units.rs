@@ -936,42 +936,116 @@ impl World {
                 }
             }
         } else {
-            let search_r = if hold_course { unit_hit_r } else { ctx.aggro_r };
+            let titan_building_prio = u.kind == 2 && u.owner_id != 0 && !strict_manual && !hold_course;
 
-            ctx.grid
-                .for_each_in_radius(u.x, u.y, search_r, |other_i, ox, oy, d2| {
-                    if other_i == i {
-                        return;
-                    }
-                    let (other_id, other_owner, _, _, other_hp, _, other_r) =
-                        ctx.unit_snapshot[other_i];
-                    if other_owner == u.owner_id || other_hp == 0 {
-                        return;
-                    }
-                    let max_d = best_edge_dist + other_r + 0.01;
-                    if d2 > max_d * max_d {
-                        return;
-                    }
-                    if !hold_course {
+            // 1. Titan siege role: always prioritize enemy buildings (Turrets -> HQ -> others) first
+            if titan_building_prio {
+                let mut best_prio: u8 = u8::MAX;
+                let mut best_b_edge = ctx.aggro_r;
+                ctx.b_grid
+                    .for_each_in_radius(u.x, u.y, ctx.aggro_r, |bi, bx, by, d2| {
+                        let Some((bid, b_owner, _, _, br, bhp, bkind)) = ctx.building_snapshot[bi]
+                        else {
+                            return;
+                        };
+                        if b_owner == u.owner_id || bhp == 0 {
+                            return;
+                        }
                         if let Some(o) = squad_order {
-                            let odx = ox - o.target_x;
-                            let ody = oy - o.target_y;
-                            if odx * odx + ody * ody > 210.0 * 210.0 {
+                            let odx = bx - o.target_x;
+                            let ody = by - o.target_y;
+                            let lim = 220.0 + br;
+                            if odx * odx + ody * ody > lim * lim {
                                 return;
                             }
                         }
-                    }
-                    if other_owner != 0 && ctx.is_protected(other_owner) {
-                        return;
-                    }
-                    let edge_d = (d2.sqrt() - other_r).max(0.0);
-                    if edge_d <= best_edge_dist {
-                        best_edge_dist = edge_d;
-                        target_unit = Some((other_id, other_i, ox, oy));
-                    }
-                });
+                        if ctx.is_protected(b_owner) {
+                            return;
+                        }
+                        let prio: u8 = match bkind {
+                            2 => 0, // Turrets first
+                            0 => 1, // HQ second
+                            _ => 2, // Other buildings
+                        };
+                        let edge_d = (d2.sqrt() - br).max(0.0);
+                        if edge_d <= ctx.aggro_r
+                            && (prio < best_prio || (prio == best_prio && edge_d < best_b_edge))
+                        {
+                            best_prio = prio;
+                            best_b_edge = edge_d;
+                            target_building = Some((bid, bi, bx, by, br, bkind));
+                        }
+                    });
+            }
 
-            if u.owner_id != 0 && target_unit.is_none() && (strict_manual || !hold_course) {
+            // 2. Unit search by role:
+            //    - Titan with a building target: only clear enemies blocking point-blank (<45px) if not already in building hit range
+            //    - Raider: tight 85px unit aggro so raids don't peel off onto distant defenders
+            //    - Archer: full 210px unit aggro (escort / anti-defender role)
+            let titan_in_b_hit = target_building.is_some_and(|(_, _, bx, by, br, _)| {
+                let dx = bx - u.x;
+                let dy = by - u.y;
+                let hit_d = my_r + br + 8.0;
+                dx * dx + dy * dy <= hit_d * hit_d
+            });
+            let unit_search_r = if hold_course {
+                unit_hit_r
+            } else if titan_building_prio && target_building.is_some() {
+                if titan_in_b_hit {
+                    0.0
+                } else {
+                    45.0
+                }
+            } else if u.kind == 0 {
+                ctx.aggro_r.min(85.0)
+            } else {
+                ctx.aggro_r
+            };
+
+            if unit_search_r > 0.0 {
+                let mut best_u_edge = unit_search_r;
+                ctx.grid
+                    .for_each_in_radius(u.x, u.y, unit_search_r, |other_i, ox, oy, d2| {
+                        if other_i == i {
+                            return;
+                        }
+                        let (other_id, other_owner, _, _, other_hp, _, other_r) =
+                            ctx.unit_snapshot[other_i];
+                        if other_owner == u.owner_id || other_hp == 0 {
+                            return;
+                        }
+                        let max_d = best_u_edge + other_r + 0.01;
+                        if d2 > max_d * max_d {
+                            return;
+                        }
+                        if !hold_course {
+                            if let Some(o) = squad_order {
+                                let odx = ox - o.target_x;
+                                let ody = oy - o.target_y;
+                                if odx * odx + ody * ody > 210.0 * 210.0 {
+                                    return;
+                                }
+                            }
+                        }
+                        if other_owner != 0 && ctx.is_protected(other_owner) {
+                            return;
+                        }
+                        let edge_d = (d2.sqrt() - other_r).max(0.0);
+                        if edge_d <= best_u_edge {
+                            best_u_edge = edge_d;
+                            target_unit = Some((other_id, other_i, ox, oy));
+                        }
+                    });
+                if target_unit.is_some() {
+                    best_edge_dist = best_u_edge;
+                }
+            }
+
+            if !titan_building_prio
+                && u.owner_id != 0
+                && target_unit.is_none()
+                && (strict_manual || !hold_course)
+            {
                 let b_search_r = if strict_manual {
                     (if is_ranged { attack_range } else { my_r + 6.0 }) + 32.0
                 } else {
