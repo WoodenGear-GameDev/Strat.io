@@ -219,6 +219,8 @@ pub struct BuildingLevelConfig {
     pub local_supply_cap: u16,
     #[serde(default)]
     pub shot_cost: f32,
+    #[serde(default)]
+    pub splash_radius: f32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

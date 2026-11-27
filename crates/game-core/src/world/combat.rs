@@ -125,10 +125,14 @@ impl World {
                     let fire_rate = lvl.fire_rate;
                     let base_dmg = lvl.damage;
                     let proj_speed = lvl.projectile_speed.max(120.0);
-                    let splash_r = match b.level {
-                        1 => 44.0_f32,
-                        2 => 48.0_f32,
-                        _ => 54.0_f32,
+                    let splash_r = if lvl.splash_radius > 0.0 {
+                        lvl.splash_radius
+                    } else {
+                        match b.level {
+                            1 => 40.0_f32,
+                            2 => 36.0_f32,
+                            _ => 32.0_f32,
+                        }
                     };
                     let src_tag = match b.level {
                         1 => SRC_TURRET_1,

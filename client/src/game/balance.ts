@@ -99,8 +99,8 @@ export const DEFAULT_BALANCE: BalanceConfig = {
       radius: 28,
       levels: [
         { cost: 70, trophy_cost: 0, hp: 520, range: 250 },
-        { cost: 160, trophy_cost: 0, hp: 950, range: 285 },
-        { cost: 360, trophy_cost: 0, hp: 1650, range: 325 },
+        { cost: 160, trophy_cost: 0, hp: 800, range: 285 },
+        { cost: 360, trophy_cost: 0, hp: 1200, range: 325 },
       ],
     },
     barracks: {

@@ -124,12 +124,13 @@
           "projectile_speed": 620.0,
           "spawn_interval_sec": 0.0,
           "unit_cap_bonus": 0,
-          "shot_cost": 1.0
+          "shot_cost": 1.0,
+          "splash_radius": 40.0
         },
         {
           "cost": 160.0,
           "trophy_cost": 0.0,
-          "hp": 950,
+          "hp": 800,
           "income_per_sec": 0.0,
           "fire_rate": 1.65,
           "damage": 28.0,
@@ -137,20 +138,22 @@
           "projectile_speed": 660.0,
           "spawn_interval_sec": 0.0,
           "unit_cap_bonus": 0,
-          "shot_cost": 3.0
+          "shot_cost": 3.0,
+          "splash_radius": 36.0
         },
         {
           "cost": 360.0,
           "trophy_cost": 0.0,
-          "hp": 1650,
+          "hp": 1200,
           "income_per_sec": 0.0,
-          "fire_rate": 1.95,
-          "damage": 42.0,
+          "fire_rate": 1.50,
+          "damage": 40.0,
           "range": 325.0,
           "projectile_speed": 700.0,
           "spawn_interval_sec": 0.0,
           "unit_cap_bonus": 0,
-          "shot_cost": 7.0
+          "shot_cost": 9.0,
+          "splash_radius": 32.0
         }
       ],
       "effects": {}
