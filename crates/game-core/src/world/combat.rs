@@ -23,6 +23,11 @@ impl World {
             .unwrap_or(1.18);
 
         let mut new_projectiles: Vec<Projectile> = Vec::new();
+        let mut player_energy: HashMap<PlayerId, f32> = self
+            .players
+            .iter()
+            .map(|(&id, p)| (id, p.energy))
+            .collect();
 
         {
             let config = &self.config;
@@ -108,6 +113,15 @@ impl World {
                 }
 
                 if let Some((target_id, target_idx, target_is_building, tx, ty)) = target_info {
+                    let shot_cost = lvl.shot_cost;
+                    if shot_cost > 0.0 {
+                        let cur_e = player_energy.get(&owner_id).copied().unwrap_or(0.0);
+                        if cur_e < shot_cost {
+                            b.cooldown_left = 0.0;
+                            continue;
+                        }
+                        player_energy.insert(owner_id, cur_e - shot_cost);
+                    }
                     let mut fire_rate = lvl.fire_rate;
                     let mut has_gen_aura = false;
                     building_grid.for_each_in_radius(bx, by, gen_aura_r, |bi, _, _, _| {
@@ -163,6 +177,12 @@ impl World {
                         splash_radius: splash_r,
                     });
                 }
+            }
+        }
+
+        for (pid, e) in player_energy {
+            if let Some(p) = self.players.get_mut(&pid) {
+                p.energy = e;
             }
         }
 

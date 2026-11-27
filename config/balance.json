@@ -126,7 +126,8 @@
           "range": 250.0,
           "projectile_speed": 620.0,
           "spawn_interval_sec": 0.0,
-          "unit_cap_bonus": 0
+          "unit_cap_bonus": 0,
+          "shot_cost": 2.0
         },
         {
           "cost": 160.0,
@@ -138,7 +139,8 @@
           "range": 285.0,
           "projectile_speed": 660.0,
           "spawn_interval_sec": 0.0,
-          "unit_cap_bonus": 0
+          "unit_cap_bonus": 0,
+          "shot_cost": 5.0
         },
         {
           "cost": 360.0,
@@ -150,7 +152,8 @@
           "range": 325.0,
           "projectile_speed": 700.0,
           "spawn_interval_sec": 0.0,
-          "unit_cap_bonus": 0
+          "unit_cap_bonus": 0,
+          "shot_cost": 11.0
         }
       ],
       "effects": {}
