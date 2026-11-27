@@ -87,11 +87,11 @@ export const DEFAULT_BALANCE: BalanceConfig = {
       name: "Генератор",
       radius: 20,
       levels: [
-        { cost: 50, hp: 350, income_per_sec: 4.5 },
-        { cost: 120, hp: 480, income_per_sec: 9.5 },
-        { cost: 260, hp: 750, income_per_sec: 17.0 },
+        { cost: 20, hp: 120, income_per_sec: 1.8 },
+        { cost: 45, hp: 200, income_per_sec: 3.5 },
+        { cost: 95, hp: 300, income_per_sec: 6.0 },
       ],
-      effects: { aura_radius: 140, fire_rate_mult: 1.18 },
+      effects: {},
     },
     turret: {
       kind_id: 2,

@@ -614,15 +614,6 @@ impl World {
                 let jitter = rng.gen_range(0.0..6.0);
                 let score = if build_kind == 2 {
                     let dist_hq = dist_hq2.sqrt();
-                    let aura_bonus = if intel.gen_positions.iter().any(|&(gx, gy)| {
-                        let dx = cx - gx;
-                        let dy = cy - gy;
-                        dx * dx + dy * dy <= aura_r2
-                    }) {
-                        120.0
-                    } else {
-                        0.0
-                    };
                     let min_t_dist2 = intel
                         .turret_positions
                         .iter()
@@ -633,7 +624,7 @@ impl World {
                         })
                         .fold(140.0_f32 * 140.0, f32::min);
                     let ring_pref = -((dist_hq - 86.0).abs() * 0.45);
-                    aura_bonus + ring_pref + min_t_dist2.sqrt() * 0.3 + jitter
+                    ring_pref + min_t_dist2.sqrt() * 0.3 + jitter
                 } else {
                     let outer_pref = if dist_hq2 >= 55.0 * 55.0 { 24.0 } else { 0.0 };
                     outer_pref + jitter
@@ -644,23 +635,6 @@ impl World {
             }
             best.map(|(pos, _)| pos)
         } else {
-            let unbuffed_turrets: Vec<(f32, f32)> = if build_kind != 5 {
-                intel
-                    .turret_positions
-                    .iter()
-                    .copied()
-                    .filter(|&(tx, ty)| {
-                        !intel.gen_positions.iter().any(|&(gx, gy)| {
-                            let dx = gx - tx;
-                            let dy = gy - ty;
-                            dx * dx + dy * dy <= aura_r2
-                        })
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
             let mut best: Option<((f32, f32), f32)> = None;
             for &(tris, (mx, my)) in &cache.free_rhombuses {
                 let dist_hq = (mx * mx + my * my).sqrt();
@@ -682,22 +656,13 @@ impl World {
                     };
                     dist_hq * 1.4 + spacing_bonus + jitter
                 } else {
-                    let turret_buff = unbuffed_turrets
-                        .iter()
-                        .filter(|&&(tx, ty)| {
-                            let dx = mx - tx;
-                            let dy = my - ty;
-                            dx * dx + dy * dy <= aura_r2
-                        })
-                        .count() as f32
-                        * 115.0;
                     let mut shared_hex_bonus = 0.0_f32;
                     for (hq_q, hq_r, _) in tris {
                         if (0..6_u8).any(|s| cache.occupied_tris.contains(&(hq_q, hq_r, s))) {
                             shared_hex_bonus += 65.0;
                         }
                     }
-                    turret_buff + shared_hex_bonus - dist_hq * 0.15 + jitter
+                    shared_hex_bonus - dist_hq * 0.15 + jitter
                 };
                 if best.as_ref().is_none_or(|&(_, bs)| score > bs) {
                     best = Some(((mx, my), score));
@@ -755,8 +720,8 @@ impl World {
             let threatened = intel.enemy_threat_power >= 1.5;
             let (free_hexes, free_rhombuses) = self.bot_free_slot_counts(pid);
 
-            // 2. Hard opener essentials before branching out
-            let opener_kind = if intel.gens < 2 && free_rhombuses > 0 {
+            // 2. Hard opener essentials before branching out (scaled for smaller 1.8 E/s generators)
+            let opener_kind = if intel.gens < 5 && free_rhombuses > 0 {
                 Some(1_u8)
             } else if intel.turrets < 1 && free_hexes > 0 {
                 Some(2_u8)
@@ -864,9 +829,10 @@ impl World {
                     }
                 }
             };
-            let target_gens = 2 + usize::from(intel.hq_lvl) * 2 + profile.extra_gens;
+            let target_gens = 5 + usize::from(intel.hq_lvl) * 5 + profile.extra_gens * 2;
             let turret_ratio = if profile.extra_turrets { 2 } else { 3 };
-            let need_eco_for_barracks = intel.gens * 5 < intel.barracks * 4 && free_rhombuses > 0;
+            let need_eco_for_barracks =
+                intel.gens < (intel.barracks + intel.turrets) && free_rhombuses > 0;
             let beacon_trophy_cost = (90.0 * 1.65_f32.powi(intel.beacons as i32)).round();
 
             let build_choice: Option<(u8, f32)> = if intel.turrets < min_turrets && free_hexes > 0
@@ -887,7 +853,7 @@ impl World {
             {
                 Some((
                     1,
-                    if intel.gens < usize::from(intel.hq_lvl) * 2 {
+                    if intel.gens < usize::from(intel.hq_lvl) * 5 {
                         104.0
                     } else {
                         78.0

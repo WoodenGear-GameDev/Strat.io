@@ -204,6 +204,7 @@ impl World {
     }
 
     pub(super) fn step_ooc_regen(&mut self, dt: f32) {
+        const REPAIR_ENERGY_PER_HP: f32 = 0.09;
         let mut regen_rates: Option<HashMap<PlayerId, f32>> = None;
         for p in self.players.values_mut() {
             if (p.survival_sec - p.last_damaged_sec) >= 6.0 {
@@ -224,9 +225,19 @@ impl World {
         for b in &mut self.buildings {
             if b.hp > 0 && b.hp < b.max_hp {
                 if let Some(&rate) = regen_rates.get(&b.owner_id) {
+                    let Some(p) = self.players.get_mut(&b.owner_id) else {
+                        continue;
+                    };
                     let eff_rate = if b.kind == 0 { rate * 0.35 } else { rate };
-                    let heal = (f32::from(b.max_hp) * eff_rate * 0.5).round().max(1.0) as u16;
-                    b.hp = b.hp.saturating_add(heal).min(b.max_hp);
+                    let missing = b.max_hp.saturating_sub(b.hp);
+                    let want_heal = ((f32::from(b.max_hp) * eff_rate * 0.5).round().max(1.0) as u16)
+                        .min(missing);
+                    let affordable_hp = (p.energy / REPAIR_ENERGY_PER_HP).floor().max(0.0) as u16;
+                    let actual_heal = want_heal.min(affordable_hp);
+                    if actual_heal > 0 {
+                        p.energy = (p.energy - f32::from(actual_heal) * REPAIR_ENERGY_PER_HP).max(0.0);
+                        b.hp = b.hp.saturating_add(actual_heal).min(b.max_hp);
+                    }
                 }
             }
         }

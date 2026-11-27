@@ -12,22 +12,19 @@ use super::World;
 
 impl World {
     pub(super) fn step_turrets(&mut self, dt: f32) {
-        let gen_cfg = self.config.building_by_kind(1);
-        let gen_aura_r = gen_cfg
-            .map(|c| c.effects.aura_radius)
-            .filter(|&v| v > 0.0)
-            .unwrap_or(140.0);
-        let gen_fr_mult = gen_cfg
-            .map(|c| c.effects.fire_rate_mult)
-            .filter(|&v| v > 1.0)
-            .unwrap_or(1.18);
-
         let mut new_projectiles: Vec<Projectile> = Vec::new();
         let mut player_energy: HashMap<PlayerId, f32> = self
             .players
             .iter()
             .map(|(&id, p)| (id, p.energy))
             .collect();
+        // Track in-flight projectile damage per unit to prevent overkill energy waste
+        let mut incoming_dmg: HashMap<EntityId, u32> = HashMap::new();
+        for p in &self.projectiles {
+            if !p.target_is_building && p.target_id != 0 {
+                *incoming_dmg.entry(p.target_id).or_insert(0) += u32::from(p.damage);
+            }
+        }
 
         {
             let config = &self.config;
@@ -76,6 +73,9 @@ impl World {
                     if u.owner_id == owner_id || u.hp == 0 {
                         return;
                     }
+                    if u32::from(u.hp) <= incoming_dmg.get(&u.id).copied().unwrap_or(0) {
+                        return;
+                    }
                     if !(u.hp < best_hp || (u.hp == best_hp && d2 < best_dist2)) {
                         return;
                     }
@@ -122,21 +122,7 @@ impl World {
                         }
                         player_energy.insert(owner_id, cur_e - shot_cost);
                     }
-                    let mut fire_rate = lvl.fire_rate;
-                    let mut has_gen_aura = false;
-                    building_grid.for_each_in_radius(bx, by, gen_aura_r, |bi, _, _, _| {
-                        if !has_gen_aura {
-                            if let Some((_, bo, _, _, _, bhp, bk)) = building_snap[bi] {
-                                if bo == owner_id && bk == 1 && bhp > 0 {
-                                    has_gen_aura = true;
-                                }
-                            }
-                        }
-                    });
-                    if has_gen_aura {
-                        fire_rate *= gen_fr_mult;
-                    }
-
+                    let fire_rate = lvl.fire_rate;
                     let base_dmg = lvl.damage;
                     let proj_speed = lvl.projectile_speed.max(120.0);
                     let splash_r = match b.level {
@@ -158,6 +144,11 @@ impl World {
                     b.angle = ((rad / TAU) * 255.0).round() as u8;
                     b.cooldown_left = 1.0 / fire_rate;
 
+                    let dmg_u16 = base_dmg.round() as u16;
+                    if !target_is_building && target_id != 0 {
+                        *incoming_dmg.entry(target_id).or_insert(0) += u32::from(dmg_u16);
+                    }
+
                     new_projectiles.push(Projectile {
                         id: 0,
                         owner_id,
@@ -172,7 +163,7 @@ impl World {
                         target_id,
                         target_idx,
                         target_is_building,
-                        damage: base_dmg.round() as u16,
+                        damage: dmg_u16,
                         ttl: flight_sec,
                         splash_radius: splash_r,
                     });
@@ -452,7 +443,7 @@ impl World {
                 let (t_tier_mult, e_tier_mult) = Self::tier_reward_mult(killer_hq, victim_hq);
                 let ring_bonus = if death_ring >= 3 { 1.2 } else { 1.0 };
 
-                let base_e = unit_cost * if turret_kill { 0.55 } else { 0.60 };
+                let base_e = unit_cost * 0.35;
                 let base_t = unit_cost * if turret_kill { 0.12 } else { 0.32 };
                 let base_s = if turret_kill { 8.0 } else { unit_cost * 0.9 };
 
