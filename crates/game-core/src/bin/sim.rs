@@ -1,7 +1,7 @@
 use game_core::config::BalanceConfig;
 use game_core::protocol::ClientMessage;
 use game_core::types::{ArmyMode, PlayerId};
-use game_core::world::{World, RING1_RADIUS};
+use game_core::world::{StepTimings, World, RING1_RADIUS};
 use std::env;
 use std::fs;
 use std::time::Instant;
@@ -53,20 +53,28 @@ fn main() {
     let out_path = parse_arg(&args, "--out").unwrap_or_else(|| "logs/sim.jsonl".to_string());
     let balance_path =
         parse_arg(&args, "--balance").unwrap_or_else(|| "config/balance.json".to_string());
+    let profile = args.iter().any(|a| a == "--profile");
+    let no_telemetry = args.iter().any(|a| a == "--no-telemetry");
+    let bots_override: Option<usize> = parse_arg(&args, "--bots").and_then(|s| s.parse().ok());
 
     let raw = fs::read_to_string(&balance_path)
         .unwrap_or_else(|e| panic!("Failed to read {balance_path}: {e}"));
-    let config = BalanceConfig::from_json(&raw)
+    let mut config = BalanceConfig::from_json(&raw)
         .unwrap_or_else(|e| panic!("Failed to parse {balance_path}: {e}"));
+    if let Some(bc) = bots_override {
+        config.world.bot_count = bc;
+    }
 
     let tick_rate = config.world.tick_rate.max(1);
     let dt = 1.0 / f32::from(tick_rate);
     let total_ticks = ((minutes * 60.0) * f32::from(tick_rate)).round() as u32;
 
     let mut world = World::new(config, seed);
-    world
-        .enable_telemetry(&out_path)
-        .unwrap_or_else(|e| panic!("Failed to enable telemetry at {out_path}: {e}"));
+    if !no_telemetry {
+        world
+            .enable_telemetry(&out_path)
+            .unwrap_or_else(|e| panic!("Failed to enable telemetry at {out_path}: {e}"));
+    }
 
     let strategies = [
         Strategy::TurtleAfk,
@@ -126,9 +134,23 @@ fn main() {
     ];
 
     let started = Instant::now();
+    let mut timings = StepTimings::default();
+    let mut last_snap_bytes = 0usize;
     for t in 0..total_ticks {
         let sec = (t as f32) * dt;
-        let game_overs = world.step(dt);
+        let game_overs = if profile {
+            let go = world.step_profiled(dt, &mut timings);
+            if let Some(first) = agents.first() {
+                let ts = Instant::now();
+                if let Some(snap) = world.build_snapshot(first.id) {
+                    last_snap_bytes = snap.encode().len();
+                }
+                timings.snapshot_ns += ts.elapsed().as_nanos() as u64;
+            }
+            go
+        } else {
+            world.step(dt)
+        };
 
         if !game_overs.is_empty() {
             for ev in &game_overs {
@@ -458,4 +480,43 @@ fn main() {
         "Simulated {:.1}m ({} ticks, seed={}) in {:.3}s -> {}",
         minutes, total_ticks, seed, elapsed, out_path
     );
+    if profile && timings.ticks > 0 {
+        let n = timings.ticks as f64;
+        let to_us = |ns: u64| (ns as f64) / n / 1000.0;
+        let total_step_us = to_us(
+            timings.bots_ns
+                + timings.push_repulsion_ns
+                + timings.eco_spawn_ns
+                + timings.turrets_ns
+                + timings.projectiles_ns
+                + timings.units_ns
+                + timings.clustering_ns
+                + timings.cleanup_ns
+                + timings.telemetry_ns,
+        );
+        let snap_us = to_us(timings.snapshot_ns);
+        println!(
+            "PROFILE (end state: players={}, buildings={}, units={}, projs={}, snap={}B):",
+            world.players.len(),
+            world.buildings.len(),
+            world.units.len(),
+            world.projectiles.len(),
+            last_snap_bytes
+        );
+        println!(
+            "  avg step={:.1}us (max={:.1}us) | bots={:.1}us push={:.1}us eco={:.1}us turrets={:.1}us projs={:.1}us units={:.1}us cluster={:.1}us cleanup={:.1}us tlog={:.1}us | snap={:.1}us",
+            total_step_us,
+            (timings.max_tick_ns as f64) / 1000.0,
+            to_us(timings.bots_ns),
+            to_us(timings.push_repulsion_ns),
+            to_us(timings.eco_spawn_ns),
+            to_us(timings.turrets_ns),
+            to_us(timings.projectiles_ns),
+            to_us(timings.units_ns),
+            to_us(timings.clustering_ns),
+            to_us(timings.cleanup_ns),
+            to_us(timings.telemetry_ns),
+            snap_us,
+        );
+    }
 }

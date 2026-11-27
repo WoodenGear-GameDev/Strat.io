@@ -48,6 +48,12 @@ export class InputController {
   }
 
   private bindEvents(): void {
+    this.bindKeyboardEvents();
+    this.bindPointerEvents();
+    this.bindTouchEvents();
+  }
+
+  private bindKeyboardEvents(): void {
     window.addEventListener("keydown", (e) => {
       const tag = document.activeElement?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
@@ -84,7 +90,9 @@ export class InputController {
         this.cancelModes();
       }
     });
+  }
 
+  private bindPointerEvents(): void {
     this.canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
     this.canvas.addEventListener("mousemove", (e) => {
@@ -197,7 +205,9 @@ export class InputController {
       },
       { passive: false },
     );
+  }
 
+  private bindTouchEvents(): void {
     // Touch controls for tablets and phones
     this.canvas.addEventListener(
       "touchstart",

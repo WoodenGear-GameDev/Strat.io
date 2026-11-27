@@ -1,0 +1,71 @@
+/* ===========================
+   Responsive Tablet & Compact
+   =========================== */
+
+/* Narrower tablets / split screen where top-left & top-right are closer */
+@media (max-width: 1020px) {
+  .doctrine-bar {
+    top: calc(var(--safe-top) + 112px);
+  }
+}
+
+@media (max-width: 760px) {
+  .hud-top-left {
+    min-width: 196px;
+    padding: 8px 10px;
+    gap: 7px;
+  }
+
+  .metric-chip {
+    padding: 5px 8px 5px 6px;
+    gap: 6px;
+  }
+
+  .metric-icon {
+    width: 26px;
+    height: 26px;
+  }
+
+  .metric-value {
+    font-size: 13.5px;
+  }
+
+  .lb-panel {
+    min-width: 156px;
+    padding: 8px 10px;
+  }
+
+  .lb-name {
+    max-width: 82px;
+  }
+
+  .doctrine-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .doctrine-btn {
+    min-height: 54px;
+    padding: 9px 12px;
+  }
+
+  .tool-btn {
+    min-width: 54px;
+    padding: 5px 4px;
+  }
+
+  .build-btn {
+    width: 64px;
+    min-width: 64px;
+  }
+
+  .tool-btn .hotkey {
+    display: none;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  /* Hide desktop keycap badges on pure touch devices for cleaner iconography */
+  .tool-btn .hotkey {
+    display: none;
+  }
+}
