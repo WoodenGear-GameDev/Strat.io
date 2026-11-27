@@ -25,14 +25,15 @@ impl World {
         }
     }
 
+    #[inline]
     pub(super) fn hq_level_of(&self, player_id: PlayerId) -> u8 {
-        self.buildings
-            .iter()
-            .find(|b| b.owner_id == player_id && b.kind == 0)
-            .map(|b| b.level)
+        self.players
+            .get(&player_id)
+            .map(|p| p.hq_level)
             .unwrap_or(1)
     }
 
+    #[allow(dead_code)]
     pub(super) fn hq_level_map(&self) -> HashMap<PlayerId, u8> {
         let mut map = HashMap::new();
         for b in &self.buildings {
@@ -177,46 +178,49 @@ impl World {
         Some((next.cost, next.trophy_cost))
     }
 
-    pub(super) fn step_ring_scoring(&mut self, _dt: f32) {
-        let tick_rate = u32::from(self.config.world.tick_rate.max(1));
-        if self.tick % tick_rate != 0 {
+    pub(super) fn step_ring_scoring(&mut self, dt: f32) {
+        self.ring_score_accum += dt;
+        if self.ring_score_accum < 1.0 {
             return;
         }
-        let zone_rings: Vec<(PlayerId, u8)> = self
-            .zones
-            .values()
-            .map(|z| (z.player_id, Self::ring_for_radius(z.x.hypot(z.y))))
-            .collect();
-        for (pid, ring) in zone_rings {
+        let whole_secs = self.ring_score_accum.floor() as u32;
+        self.ring_score_accum -= whole_secs as f32;
+
+        let zones = &self.zones;
+        let players = &mut self.players;
+        for z in zones.values() {
+            let ring = Self::ring_for_radius((z.x * z.x + z.y * z.y).sqrt());
             let pts = match ring {
                 2 => 1,
                 3 => 4,
                 _ => 0,
             };
             if pts > 0 {
-                if let Some(p) = self.players.get_mut(&pid) {
-                    p.score += pts;
+                if let Some(p) = players.get_mut(&z.player_id) {
+                    p.score += pts * whole_secs;
                 }
             }
         }
     }
 
     pub(super) fn step_ooc_regen(&mut self, dt: f32) {
-        let mut regen_rates: HashMap<PlayerId, f32> = HashMap::new();
+        let mut regen_rates: Option<HashMap<PlayerId, f32>> = None;
         for p in self.players.values_mut() {
             if (p.survival_sec - p.last_damaged_sec) >= 6.0 {
                 p.regen_accum += dt;
                 if p.regen_accum >= 0.5 {
                     p.regen_accum -= 0.5;
-                    regen_rates.insert(p.id, 0.015);
+                    regen_rates
+                        .get_or_insert_with(HashMap::new)
+                        .insert(p.id, 0.015);
                 }
             } else {
                 p.regen_accum = 0.0;
             }
         }
-        if regen_rates.is_empty() {
+        let Some(regen_rates) = regen_rates else {
             return;
-        }
+        };
         for b in &mut self.buildings {
             if b.hp > 0 && b.hp < b.max_hp {
                 if let Some(&rate) = regen_rates.get(&b.owner_id) {
@@ -229,167 +233,177 @@ impl World {
     }
 
     pub(super) fn step_income_and_spawning(&mut self, dt: f32) {
-        let hq_levels = self.hq_level_map();
-        let mut player_supply: HashMap<PlayerId, u16> = HashMap::new();
-        let mut barrack_supply: HashMap<EntityId, u16> = HashMap::new();
-        for u in &self.units {
-            if u.owner_id != 0 && u.hp > 0 && u.kind != 4 {
-                let sup = self.unit_supply_cost(u.kind);
-                *player_supply.entry(u.owner_id).or_insert(0) += sup;
-                *barrack_supply.entry(u.home_id).or_insert(0) += sup;
-            }
-        }
-
         // 1. Passive energy generation (clamped to HQ energy_cap)
-        let mut passive_income: Vec<(PlayerId, u8, f32)> = Vec::new();
-        for b in &self.buildings {
-            if b.kind != 0 && b.kind != 1 {
-                continue;
-            }
-            if let Some(cfg) = self.config.building_by_kind(b.kind) {
-                if let Some(lvl) = cfg.levels.get((b.level as usize).saturating_sub(1)) {
-                    if lvl.income_per_sec > 0.0 {
-                        passive_income.push((
-                            b.owner_id,
-                            if b.kind == 0 { 0 } else { 1 },
-                            lvl.income_per_sec * dt,
-                        ));
+        {
+            let config = &self.config;
+            let hq_cfg = config.building_by_kind(0);
+            let gen_cfg = config.building_by_kind(1);
+            let players = &mut self.players;
+            let telemetry = &mut self.telemetry;
+            for b in &self.buildings {
+                let (cfg_opt, src_slot) = match b.kind {
+                    0 => (hq_cfg, 0_usize),
+                    1 => (gen_cfg, 1_usize),
+                    _ => continue,
+                };
+                let Some(cfg) = cfg_opt else {
+                    continue;
+                };
+                let Some(lvl) = cfg.levels.get((b.level as usize).saturating_sub(1)) else {
+                    continue;
+                };
+                if lvl.income_per_sec <= 0.0 {
+                    continue;
+                }
+                let amount = lvl.income_per_sec * dt;
+                if let Some(p) = players.get_mut(&b.owner_id) {
+                    let hq_lvl = p.hq_level;
+                    let cfg_cap = hq_cfg
+                        .and_then(|c| c.levels.get(usize::from(hq_lvl.saturating_sub(1))))
+                        .map(|l| l.energy_cap)
+                        .unwrap_or(0.0);
+                    let max_e = if cfg_cap > 0.0 {
+                        cfg_cap
+                    } else {
+                        match hq_lvl {
+                            0 | 1 => 400.0,
+                            2 => 950.0,
+                            _ => 2000.0,
+                        }
+                    };
+                    p.total_energy_earned += amount;
+                    if p.energy < max_e {
+                        p.energy = (p.energy + amount).min(max_e);
                     }
                 }
-            }
-        }
-
-        for (pid, src_slot, amount) in passive_income {
-            let hq_lvl = hq_levels.get(&pid).copied().unwrap_or(1);
-            self.grant_energy(pid, amount, 1.0, hq_lvl);
-            if let Some(tl) = self.telemetry.as_mut() {
-                tl.log_income(pid, usize::from(src_slot), amount);
+                if let Some(tl) = telemetry.as_mut() {
+                    tl.log_income(b.owner_id, src_slot, amount);
+                }
             }
         }
 
         // 2. Paid Barracks spawning (per-barrack local supply cap + global supply cap + unit energy cost)
-        let raider_cfg = self.config.unit_by_kind(0).cloned();
-        let archer_cfg = self.config.unit_by_kind(1).cloned();
-        let titan_cfg = self.config.unit_by_kind(2).cloned();
-        let mut player_energy: HashMap<PlayerId, f32> = self
-            .players
-            .iter()
-            .map(|(&pid, p)| (pid, p.energy))
-            .collect();
-        let player_caps: HashMap<PlayerId, u16> = self
-            .players
-            .iter()
-            .map(|(&pid, p)| (pid, p.unit_cap))
-            .collect();
+        let raider = self.config.unit_fast_stats(0);
+        let archer = self.config.unit_fast_stats(1);
+        let titan = self.config.unit_fast_stats(2);
 
         let mut spawned_units: Vec<Unit> = Vec::new();
-        for b in &mut self.buildings {
-            if b.kind != 3 || (b.meta & 0x01) != 0 {
-                continue;
-            }
-            let Some(cfg) = self.config.building_by_kind(3) else {
-                continue;
+        {
+            let config = &self.config;
+            let Some(barrack_cfg) = config.building_by_kind(3) else {
+                return;
             };
-            let Some(lvl) = cfg.levels.get((b.level as usize).saturating_sub(1)) else {
-                continue;
-            };
-            if lvl.spawn_interval_sec <= 0.0 {
-                continue;
-            }
+            let buildings = &mut self.buildings;
+            let players = &mut self.players;
+            let zones = &self.zones;
+            let units = &self.units;
+            let rng = &mut self.rng;
 
-            b.cooldown_left -= dt;
-            if b.cooldown_left > 0.0 {
-                continue;
-            }
+            let mut supply_maps: Option<(HashMap<PlayerId, u16>, HashMap<EntityId, u16>)> = None;
 
-            let requested_type = (b.meta >> 2) & 0x07;
-            let (ukind, raw_hp, u_cost, u_sup, cd_mult) = match requested_type {
-                1 if b.level >= 2 => (
-                    1_u8,
-                    archer_cfg.as_ref().map(|c| c.hp).unwrap_or(44.0),
-                    archer_cfg.as_ref().map(|c| c.cost).unwrap_or(24.0),
-                    archer_cfg.as_ref().map(|c| c.supply_cost.max(1)).unwrap_or(1),
-                    1.25_f32,
-                ),
-                2 if b.level >= 3 => (
-                    2_u8,
-                    titan_cfg.as_ref().map(|c| c.hp).unwrap_or(540.0),
-                    titan_cfg.as_ref().map(|c| c.cost).unwrap_or(65.0),
-                    titan_cfg.as_ref().map(|c| c.supply_cost.max(1)).unwrap_or(3),
-                    2.1_f32,
-                ),
-                _ => (
-                    0_u8,
-                    raider_cfg.as_ref().map(|c| c.hp).unwrap_or(78.0),
-                    raider_cfg.as_ref().map(|c| c.cost).unwrap_or(14.0),
-                    raider_cfg.as_ref().map(|c| c.supply_cost.max(1)).unwrap_or(1),
-                    1.0_f32,
-                ),
-            };
-
-            let local_cap = if lvl.local_supply_cap > 0 {
-                lvl.local_supply_cap
-            } else {
-                match b.level {
-                    1 => 3,
-                    2 => 4,
-                    _ => 6,
-                }
-            };
-            let global_cap = player_caps.get(&b.owner_id).copied().unwrap_or(0);
-            let cur_global = player_supply.get(&b.owner_id).copied().unwrap_or(0);
-            let cur_local = barrack_supply.get(&b.id).copied().unwrap_or(0);
-            let cur_energy = player_energy.get(&b.owner_id).copied().unwrap_or(0.0);
-
-            if cur_local + u_sup <= local_cap
-                && cur_global + u_sup <= global_cap
-                && cur_energy >= u_cost
-            {
-                if let Some(zone) = self.zones.get(&b.owner_id) {
-                    let angle = self.rng.gen_range(0.0..TAU);
-                    let offset = cfg.radius + 14.0;
-                    let ux = zone.x + b.rel_x + angle.cos() * offset;
-                    let uy = zone.y + b.rel_y + angle.sin() * offset;
-                    let max_hp = raw_hp.round() as u16;
-                    let spawn_squad = self
-                        .players
-                        .get(&b.owner_id)
-                        .and_then(|p| p.reinforce_squad.filter(|sid| p.squads.contains_key(sid)))
-                        .unwrap_or(0);
-                    spawned_units.push(Unit {
-                        id: 0,
-                        owner_id: b.owner_id,
-                        kind: ukind,
-                        squad: spawn_squad,
-                        x: ux,
-                        y: uy,
-                        vx: 0.0,
-                        vy: 0.0,
-                        hp: max_hp,
-                        max_hp,
-                        attack_cooldown_left: 0.0,
-                        last_hit_by: None,
-                        last_hit_src: SRC_UNKNOWN,
-                        rad_accum: 0.0,
-                        in_lower_ring_sec: 0.0,
-                        regen_accum: 0.0,
-                        home_id: b.id,
-                        knockback_vx: 0.0,
-                        knockback_vy: 0.0,
-                    });
-                    *player_supply.entry(b.owner_id).or_insert(0) += u_sup;
-                    *barrack_supply.entry(b.id).or_insert(0) += u_sup;
-                    player_energy.insert(b.owner_id, cur_energy - u_cost);
-                    b.cooldown_left = lvl.spawn_interval_sec * cd_mult;
+            for b in buildings.iter_mut() {
+                if b.kind != 3 || (b.meta & 0x01) != 0 {
                     continue;
                 }
-            }
-            b.cooldown_left = 0.0;
-        }
+                let Some(lvl) = barrack_cfg.levels.get((b.level as usize).saturating_sub(1)) else {
+                    continue;
+                };
+                if lvl.spawn_interval_sec <= 0.0 {
+                    continue;
+                }
 
-        for (pid, e_left) in player_energy {
-            if let Some(p) = self.players.get_mut(&pid) {
-                p.energy = e_left;
+                b.cooldown_left -= dt;
+                if b.cooldown_left > 0.0 {
+                    continue;
+                }
+
+                let (player_supply, barrack_supply) = supply_maps.get_or_insert_with(|| {
+                    let mut ps: HashMap<PlayerId, u16> = HashMap::new();
+                    let mut bs: HashMap<EntityId, u16> = HashMap::new();
+                    for u in units.iter() {
+                        if u.owner_id != 0 && u.hp > 0 && u.kind != 4 {
+                            let sup = match u.kind {
+                                0 => raider.supply_cost,
+                                1 => archer.supply_cost,
+                                2 => titan.supply_cost,
+                                k => config
+                                    .unit_by_kind(k)
+                                    .map(|c| c.supply_cost.max(1))
+                                    .unwrap_or(1),
+                            };
+                            *ps.entry(u.owner_id).or_insert(0) += sup;
+                            *bs.entry(u.home_id).or_insert(0) += sup;
+                        }
+                    }
+                    (ps, bs)
+                });
+
+                let requested_type = (b.meta >> 2) & 0x07;
+                let (ukind, raw_hp, u_cost, u_sup, cd_mult) = match requested_type {
+                    1 if b.level >= 2 => (1_u8, archer.hp, archer.cost, archer.supply_cost, 1.25_f32),
+                    2 if b.level >= 3 => (2_u8, titan.hp, titan.cost, titan.supply_cost, 2.1_f32),
+                    _ => (0_u8, raider.hp, raider.cost, raider.supply_cost, 1.0_f32),
+                };
+
+                let local_cap = if lvl.local_supply_cap > 0 {
+                    lvl.local_supply_cap
+                } else {
+                    match b.level {
+                        1 => 3,
+                        2 => 4,
+                        _ => 6,
+                    }
+                };
+                let cur_global = player_supply.get(&b.owner_id).copied().unwrap_or(0);
+                let cur_local = barrack_supply.get(&b.id).copied().unwrap_or(0);
+
+                if cur_local + u_sup <= local_cap {
+                    if let Some(p) = players.get_mut(&b.owner_id) {
+                        if cur_global + u_sup <= p.unit_cap && p.energy >= u_cost {
+                            if let Some(zone) = zones.get(&b.owner_id) {
+                                let angle = rng.gen_range(0.0..TAU);
+                                let offset = barrack_cfg.radius + 14.0;
+                                let ux = zone.x + b.rel_x + angle.cos() * offset;
+                                let uy = zone.y + b.rel_y + angle.sin() * offset;
+                                let max_hp = raw_hp.round() as u16;
+                                let spawn_squad = p
+                                    .reinforce_squad
+                                    .filter(|sid| p.squads.contains_key(sid))
+                                    .unwrap_or(0);
+                                spawned_units.push(Unit {
+                                    id: 0,
+                                    owner_id: b.owner_id,
+                                    kind: ukind,
+                                    squad: spawn_squad,
+                                    x: ux,
+                                    y: uy,
+                                    vx: 0.0,
+                                    vy: 0.0,
+                                    hp: max_hp,
+                                    max_hp,
+                                    attack_cooldown_left: 0.0,
+                                    last_hit_by: None,
+                                    last_hit_src: SRC_UNKNOWN,
+                                    rad_accum: 0.0,
+                                    in_lower_ring_sec: 0.0,
+                                    regen_accum: 0.0,
+                                    home_id: b.id,
+                                    knockback_vx: 0.0,
+                                    knockback_vy: 0.0,
+                                    target_id: 0,
+                                    target_idx: 0,
+                                    target_is_building: false,
+                                });
+                                *player_supply.entry(b.owner_id).or_insert(0) += u_sup;
+                                *barrack_supply.entry(b.id).or_insert(0) += u_sup;
+                                p.energy -= u_cost;
+                                b.cooldown_left = lvl.spawn_interval_sec * cd_mult;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                b.cooldown_left = 0.0;
             }
         }
 

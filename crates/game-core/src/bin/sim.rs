@@ -487,6 +487,7 @@ fn main() {
             timings.bots_ns
                 + timings.push_repulsion_ns
                 + timings.eco_spawn_ns
+                + timings.grid_ns
                 + timings.turrets_ns
                 + timings.projectiles_ns
                 + timings.units_ns
@@ -504,12 +505,13 @@ fn main() {
             last_snap_bytes
         );
         println!(
-            "  avg step={:.1}us (max={:.1}us) | bots={:.1}us push={:.1}us eco={:.1}us turrets={:.1}us projs={:.1}us units={:.1}us cluster={:.1}us cleanup={:.1}us tlog={:.1}us | snap={:.1}us",
+            "  avg step={:.1}us (max={:.1}us) | bots={:.1}us push={:.1}us eco={:.1}us grid={:.1}us turrets={:.1}us projs={:.1}us units={:.1}us cluster={:.1}us cleanup={:.1}us tlog={:.1}us | snap={:.1}us",
             total_step_us,
             (timings.max_tick_ns as f64) / 1000.0,
             to_us(timings.bots_ns),
             to_us(timings.push_repulsion_ns),
             to_us(timings.eco_spawn_ns),
+            to_us(timings.grid_ns),
             to_us(timings.turrets_ns),
             to_us(timings.projectiles_ns),
             to_us(timings.units_ns),
@@ -517,6 +519,21 @@ fn main() {
             to_us(timings.cleanup_ns),
             to_us(timings.telemetry_ns),
             snap_us,
+        );
+        let mp = timings.max_tick_phases_ns;
+        println!(
+            "  max tick #{} ({:.1}us): bots={:.1}us push={:.1}us eco={:.1}us grid={:.1}us turrets={:.1}us projs={:.1}us units={:.1}us cluster={:.1}us cleanup={:.1}us",
+            timings.max_tick_num,
+            (timings.max_tick_ns as f64) / 1000.0,
+            (mp[0] as f64) / 1000.0,
+            (mp[1] as f64) / 1000.0,
+            (mp[2] as f64) / 1000.0,
+            (mp[3] as f64) / 1000.0,
+            (mp[4] as f64) / 1000.0,
+            (mp[5] as f64) / 1000.0,
+            (mp[6] as f64) / 1000.0,
+            (mp[7] as f64) / 1000.0,
+            (mp[8] as f64) / 1000.0,
         );
     }
 }

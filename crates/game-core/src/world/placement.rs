@@ -7,7 +7,7 @@ use super::hex::{
     beacon_ext_radius, collect_rhombuses, core_hex_radius, hex_to_rel, insert_hex_disk,
     is_large_building, rel_to_hex_round, TriCoord, HEX_EDGE_DIRS, HEX_SIZE,
 };
-use super::World;
+use super::{BaseGridCache, World};
 
 impl World {
     pub(super) fn find_safe_orbit_spot(
@@ -37,7 +37,9 @@ impl World {
                 if other.player_id == player_id {
                     continue;
                 }
-                let clear = (cx - other.x).hypot(cy - other.y) - (zone_r + other.radius);
+                let dx = cx - other.x;
+                let dy = cy - other.y;
+                let clear = (dx * dx + dy * dy).sqrt() - (zone_r + other.radius);
                 if clear < min_clear {
                     min_clear = clear;
                 }
@@ -46,8 +48,9 @@ impl World {
                 if b.owner_id != player_id && b.kind == 5 {
                     if let Some(other) = self.zones.get(&b.owner_id) {
                         let ext_r = beacon_ext_radius(b.level);
-                        let clear =
-                            (cx - (other.x + b.rel_x)).hypot(cy - (other.y + b.rel_y)) - (zone_r + ext_r);
+                        let dx = cx - (other.x + b.rel_x);
+                        let dy = cy - (other.y + b.rel_y);
+                        let clear = (dx * dx + dy * dy).sqrt() - (zone_r + ext_r);
                         if clear < min_clear {
                             min_clear = clear;
                         }
@@ -75,6 +78,7 @@ impl World {
             for b in &self.buildings {
                 if b.owner_id == player_id && b.kind == 5 {
                     let rad = beacon_ext_radius(b.level);
+                    let rad2 = rad * rad;
                     let hex_span = ((rad / (HEX_SIZE * 1.5)).ceil() as i32) + 1;
                     let (cq, cr) = rel_to_hex_round(b.rel_x, b.rel_y);
                     for dq in -hex_span..=hex_span {
@@ -82,7 +86,9 @@ impl World {
                             let lq = cq + dq;
                             let lr = cr + dr;
                             let (lx, ly) = hex_to_rel(lq, lr);
-                            if (lx - b.rel_x).hypot(ly - b.rel_y) <= rad {
+                            let dx = lx - b.rel_x;
+                            let dy = ly - b.rel_y;
+                            if dx * dx + dy * dy <= rad2 {
                                 open.insert((lq, lr));
                             }
                         }
@@ -108,20 +114,63 @@ impl World {
                 for s in 0..6_u8 {
                     occupied.insert((aq, ar, s));
                 }
-            } else if let Some((tris, _)) = rhombuses.iter().min_by(|(_, (ax, ay)), (_, (bx, by))| {
-                let da = (ax - b.rel_x).hypot(ay - b.rel_y);
-                let db = (bx - b.rel_x).hypot(by - b.rel_y);
-                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-            }) {
-                occupied.insert(tris[0]);
-                occupied.insert(tris[1]);
+            } else {
+                let mut best_d2 = f32::INFINITY;
+                let mut best_tris: Option<[TriCoord; 2]> = None;
+                for &(tris, (ax, ay)) in rhombuses {
+                    let dx = ax - b.rel_x;
+                    let dy = ay - b.rel_y;
+                    let d2 = dx * dx + dy * dy;
+                    if d2 < best_d2 {
+                        best_d2 = d2;
+                        best_tris = Some(tris);
+                        if d2 < 4.0 {
+                            break;
+                        }
+                    }
+                }
+                if let Some(tris) = best_tris {
+                    occupied.insert(tris[0]);
+                    occupied.insert(tris[1]);
+                }
             }
         }
         occupied
     }
 
+    pub(super) fn ensure_base_grid(&mut self, player_id: PlayerId) -> &BaseGridCache {
+        if !self.base_grid_cache.contains_key(&player_id) {
+            let open_hexes = self.collect_player_open_large_hexes(player_id);
+            let rhombuses = collect_rhombuses(&open_hexes);
+            let occupied_tris = self.collect_player_occupied_tris(player_id, &rhombuses);
+            let free_hexes: Vec<(i32, i32)> = open_hexes
+                .iter()
+                .copied()
+                .filter(|&(q, r)| !(0..6_u8).any(|s| occupied_tris.contains(&(q, r, s))))
+                .collect();
+            let free_rhombuses: Vec<([TriCoord; 2], (f32, f32))> = rhombuses
+                .iter()
+                .copied()
+                .filter(|&(tris, _)| {
+                    !occupied_tris.contains(&tris[0]) && !occupied_tris.contains(&tris[1])
+                })
+                .collect();
+            self.base_grid_cache.insert(
+                player_id,
+                BaseGridCache {
+                    occupied_tris,
+                    free_hexes,
+                    free_rhombuses,
+                },
+            );
+        }
+        self.base_grid_cache
+            .get(&player_id)
+            .expect("base_grid_cache just populated")
+    }
+
     pub(super) fn find_valid_placement(
-        &self,
+        &mut self,
         player_id: PlayerId,
         building_kind: u8,
         rel_x: f32,
@@ -131,33 +180,29 @@ impl World {
         if building_kind == 0 {
             return None;
         }
-        let open_hexes = self.collect_player_open_large_hexes(player_id);
-        let rhombuses = collect_rhombuses(&open_hexes);
-        let occupied = self.collect_player_occupied_tris(player_id, &rhombuses);
+        let cache = self.ensure_base_grid(player_id);
 
         let mut best: Option<(f32, f32)> = None;
-        let mut best_d = max_dist;
+        let mut best_d2 = max_dist * max_dist;
 
         if is_large_building(building_kind) {
-            for &(q, r) in &open_hexes {
-                if (0..6_u8).any(|s| occupied.contains(&(q, r, s))) {
-                    continue;
-                }
+            for &(q, r) in &cache.free_hexes {
                 let (cx, cy) = hex_to_rel(q, r);
-                let d = (cx - rel_x).hypot(cy - rel_y);
-                if d <= best_d {
-                    best_d = d;
+                let dx = cx - rel_x;
+                let dy = cy - rel_y;
+                let d2 = dx * dx + dy * dy;
+                if d2 <= best_d2 {
+                    best_d2 = d2;
                     best = Some((cx, cy));
                 }
             }
         } else {
-            for &(tris, (mx, my)) in &rhombuses {
-                if occupied.contains(&tris[0]) || occupied.contains(&tris[1]) {
-                    continue;
-                }
-                let d = (mx - rel_x).hypot(my - rel_y);
-                if d <= best_d {
-                    best_d = d;
+            for &(_, (mx, my)) in &cache.free_rhombuses {
+                let dx = mx - rel_x;
+                let dy = my - rel_y;
+                let d2 = dx * dx + dy * dy;
+                if d2 <= best_d2 {
+                    best_d2 = d2;
                     best = Some((mx, my));
                 }
             }
@@ -199,9 +244,11 @@ impl World {
                 let (aq, ar) = rel_to_hex_round(b.rel_x, b.rel_y);
                 reachable.contains(&(aq, ar))
             } else {
-                valid_rhombuses
-                    .iter()
-                    .any(|&(_, (mx, my))| (mx - b.rel_x).hypot(my - b.rel_y) <= 6.0)
+                valid_rhombuses.iter().any(|&(_, (mx, my))| {
+                    let dx = mx - b.rel_x;
+                    let dy = my - b.rel_y;
+                    dx * dx + dy * dy <= 36.0
+                })
             };
             if !keep && b.kind == 1 {
                 removed_station_ids.insert(b.id);
@@ -215,5 +262,6 @@ impl World {
         }
 
         self.recompute_unit_cap(player_id);
+        self.invalidate_base_grid(player_id);
     }
 }

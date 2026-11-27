@@ -8,8 +8,7 @@ use crate::protocol::ClientMessage;
 use crate::types::{BotKnownTarget, EntityId, PlayerId, SquadOrder, Zone};
 
 use super::hex::{
-    beacon_ext_radius, collect_rhombuses, hex_to_rel, is_large_building, TriCoord, RING1_RADIUS,
-    RING2_RADIUS,
+    beacon_ext_radius, hex_to_rel, is_large_building, RING1_RADIUS, RING2_RADIUS,
 };
 use super::World;
 
@@ -28,12 +27,43 @@ pub(super) struct BotPlayerIntel {
     pub gen_positions: Vec<(f32, f32)>,
     pub turret_positions: Vec<(f32, f32)>,
     pub beacon_positions: Vec<(f32, f32)>,
+    pub beacon_vision: Vec<(f32, f32, f32)>,
     pub barracks_info: Vec<(EntityId, u8, u8)>,
     pub non_hq_buildings: Vec<(EntityId, u8, u8)>,
     pub own_units: usize,
     pub own_combat_power: f32,
     pub defending_unit_power: f32,
     pub enemy_threat_power: f32,
+    pub own_unit_positions: Vec<(f32, f32)>,
+    pub squad_unit_positions: Vec<(f32, f32)>,
+    pub garrison_count: usize,
+    pub live_squads: Vec<(u8, usize, f32, f32)>,
+}
+
+#[inline]
+fn bot_has_vision_fast(own_z: &Zone, intel: &BotPlayerIntel, tx: f32, ty: f32) -> bool {
+    let dx = tx - own_z.x;
+    let dy = ty - own_z.y;
+    let zr = own_z.radius + 360.0;
+    if dx * dx + dy * dy <= zr * zr {
+        return true;
+    }
+    for &(bx, by, vr2) in &intel.beacon_vision {
+        let bdx = tx - bx;
+        let bdy = ty - by;
+        if bdx * bdx + bdy * bdy <= vr2 {
+            return true;
+        }
+    }
+    const UNIT_VR2: f32 = 290.0 * 290.0;
+    for &(ux, uy) in &intel.own_unit_positions {
+        let udx = tx - ux;
+        let udy = ty - uy;
+        if udx * udx + udy * udy <= UNIT_VR2 {
+            return true;
+        }
+    }
+    false
 }
 
 struct ArchetypeProfile {
@@ -200,6 +230,12 @@ impl World {
                 5 => {
                     entry.beacons += 1;
                     entry.beacon_positions.push((b.rel_x, b.rel_y));
+                    if let Some(z) = self.zones.get(&b.owner_id) {
+                        let vr = beacon_ext_radius(b.level) + 220.0;
+                        entry
+                            .beacon_vision
+                            .push((z.x + b.rel_x, z.y + b.rel_y, vr * vr));
+                    }
                 }
                 _ => {}
             }
@@ -208,14 +244,15 @@ impl World {
             }
         }
 
-        let bot_zones: Vec<(PlayerId, f32, f32, f32)> = self
+        let bot_zones: Vec<(PlayerId, f32, f32, f32, f32)> = self
             .players
             .values()
             .filter(|p| p.is_bot)
             .filter_map(|p| {
-                self.zones
-                    .get(&p.id)
-                    .map(|z| (p.id, z.x, z.y, z.radius + 230.0))
+                self.zones.get(&p.id).map(|z| {
+                    let perim_r = z.radius + 230.0;
+                    (p.id, z.x, z.y, perim_r, perim_r * perim_r)
+                })
             })
             .collect();
 
@@ -232,17 +269,53 @@ impl World {
                 entry.own_units += 1;
                 entry.own_combat_power += power;
                 if let Some(oz) = self.zones.get(&u.owner_id) {
-                    if (u.x - oz.x).hypot(u.y - oz.y) <= oz.radius + 260.0 {
+                    let dx = u.x - oz.x;
+                    let dy = u.y - oz.y;
+                    let def_r = oz.radius + 260.0;
+                    if dx * dx + dy * dy <= def_r * def_r {
                         entry.defending_unit_power += power;
                     }
                 }
-            }
-            for &(bpid, zx, zy, perim_r) in &bot_zones {
-                if u.owner_id != bpid && (u.x - zx).hypot(u.y - zy) <= perim_r {
-                    if let Some(entry) = map.get_mut(&bpid) {
-                        entry.enemy_threat_power += power;
+                if u.kind != 4 {
+                    entry.own_unit_positions.push((u.x, u.y));
+                    if u.squad == 0 {
+                        entry.garrison_count += 1;
+                    } else {
+                        entry.squad_unit_positions.push((u.x, u.y));
+                        if let Some(sq) = entry.live_squads.iter_mut().find(|s| s.0 == u.squad) {
+                            sq.1 += 1;
+                            sq.2 += u.x;
+                            sq.3 += u.y;
+                        } else {
+                            entry.live_squads.push((u.squad, 1, u.x, u.y));
+                        }
                     }
                 }
+            }
+            for &(bpid, zx, zy, perim_r, perim_r2) in &bot_zones {
+                if u.owner_id != bpid {
+                    let dx = u.x - zx;
+                    let dy = u.y - zy;
+                    if dx.abs() <= perim_r
+                        && dy.abs() <= perim_r
+                        && dx * dx + dy * dy <= perim_r2
+                    {
+                        if let Some(entry) = map.get_mut(&bpid) {
+                            entry.enemy_threat_power += power;
+                        }
+                    }
+                }
+            }
+        }
+
+        for entry in map.values_mut() {
+            if !entry.live_squads.is_empty() {
+                for sq in &mut entry.live_squads {
+                    let inv = 1.0 / sq.1 as f32;
+                    sq.2 *= inv;
+                    sq.3 *= inv;
+                }
+                entry.live_squads.sort_unstable_by_key(|&(sq, _, _, _)| sq);
             }
         }
 
@@ -264,8 +337,11 @@ impl World {
         intel.gen_positions.clear();
         intel.turret_positions.clear();
         intel.beacon_positions.clear();
+        intel.beacon_vision.clear();
         intel.barracks_info.clear();
         intel.non_hq_buildings.clear();
+
+        let own_zone_pos = self.zones.get(&pid).map(|z| (z.x, z.y));
 
         for b in &self.buildings {
             if b.owner_id != pid {
@@ -299,6 +375,12 @@ impl World {
                 5 => {
                     intel.beacons += 1;
                     intel.beacon_positions.push((b.rel_x, b.rel_y));
+                    if let Some((zx, zy)) = own_zone_pos {
+                        let vr = beacon_ext_radius(b.level) + 220.0;
+                        intel
+                            .beacon_vision
+                            .push((zx + b.rel_x, zy + b.rel_y, vr * vr));
+                    }
                 }
                 _ => {}
             }
@@ -312,6 +394,8 @@ impl World {
     fn bot_try_teleport_to_point(
         &mut self,
         pid: PlayerId,
+        zone: &Zone,
+        intel: &BotPlayerIntel,
         tx: f32,
         ty: f32,
         min_ring_r: f32,
@@ -323,20 +407,22 @@ impl World {
             return false;
         }
         let energy = p.energy;
-        let Some(zone) = self.zones.get(&pid).cloned() else {
-            return false;
-        };
         let map_r = self.config.world.map_radius;
-        let tr = tx.hypot(ty);
+        let tr = (tx * tx + ty * ty).sqrt();
         if tr < min_ring_r || tr > (map_r - zone.radius - 30.0).max(min_ring_r) {
             return false;
         }
-        if !self.has_vision_at(pid, tx, ty) {
+        if !bot_has_vision_fast(zone, intel, tx, ty) {
             return false;
         }
         let clear_zones = self.zones.values().all(|other| {
-            other.player_id == pid
-                || (tx - other.x).hypot(ty - other.y) >= zone.radius + other.radius + 165.0
+            if other.player_id == pid {
+                return true;
+            }
+            let dx = tx - other.x;
+            let dy = ty - other.y;
+            let min_d = zone.radius + other.radius + 165.0;
+            dx * dx + dy * dy >= min_d * min_d
         });
         if !clear_zones {
             return false;
@@ -349,17 +435,22 @@ impl World {
                 return true;
             };
             let ext_r = beacon_ext_radius(b.level);
-            (tx - (other.x + b.rel_x)).hypot(ty - (other.y + b.rel_y))
-                >= zone.radius + ext_r + 125.0
+            let dx = tx - (other.x + b.rel_x);
+            let dy = ty - (other.y + b.rel_y);
+            let min_d = zone.radius + ext_r + 125.0;
+            dx * dx + dy * dy >= min_d * min_d
         });
         if !clear_beacons {
             return false;
         }
         let r_eq = self.equilibrium_radius(pid);
-        let dist = (tx - zone.x).hypot(ty - zone.y);
-        if dist < 240.0 {
+        let dx = tx - zone.x;
+        let dy = ty - zone.y;
+        let dist2 = dx * dx + dy * dy;
+        if dist2 < 240.0 * 240.0 {
             return false;
         }
+        let dist = dist2.sqrt();
         let ring_pen = if tr < r_eq {
             self.config.world.teleport_ring_penalty * 3.0
         } else {
@@ -385,7 +476,9 @@ impl World {
     fn bot_try_tactical_teleport(
         &mut self,
         pid: PlayerId,
-        hq_lvl: u8,
+        own_z: &Zone,
+        own_r: f32,
+        intel: &BotPlayerIntel,
         desired_target: Option<(f32, f32)>,
         allow_tactical: bool,
     ) -> bool {
@@ -395,32 +488,24 @@ impl World {
         if p.teleport_cooldown_left > 0.0 || p.energy < 220.0 {
             return false;
         }
-        let Some(own_z) = self.zones.get(&pid).cloned() else {
-            return false;
-        };
-        let min_ring_r = match hq_lvl {
+        let min_ring_r = match intel.hq_lvl {
             3.. => RING2_RADIUS + own_z.radius + 90.0,
             2 => RING1_RADIUS + own_z.radius + 90.0,
             _ => own_z.radius + 120.0,
         };
 
-        // Gather candidate vision anchors from own combat drones
-        let drone_pts: Vec<(f32, f32)> = self
-            .units
-            .iter()
-            .filter(|u| u.owner_id == pid && u.hp > 0 && u.kind != 4 && u.squad > 0)
-            .map(|u| (u.x, u.y))
-            .collect();
-
         // 1. Tactical forward jump toward a distant target (>850px away) if a drone gives vision near it
         if allow_tactical {
             if let Some((tx, ty)) = desired_target {
-                let cur_dist = (tx - own_z.x).hypot(ty - own_z.y);
-                if cur_dist > 850.0 {
-                    for &(dx, dy) in drone_pts.iter().step_by(2.max(1)) {
-                        let d_to_enemy = (dx - tx).hypot(dy - ty);
-                        if (280.0..=560.0).contains(&d_to_enemy)
-                            && self.bot_try_teleport_to_point(pid, dx, dy, min_ring_r)
+                let dtx = tx - own_z.x;
+                let dty = ty - own_z.y;
+                if dtx * dtx + dty * dty > 850.0 * 850.0 {
+                    for &(dx, dy) in intel.squad_unit_positions.iter().step_by(2) {
+                        let ex = dx - tx;
+                        let ey = dy - ty;
+                        let e2 = ex * ex + ey * ey;
+                        if (280.0 * 280.0..=560.0 * 560.0).contains(&e2)
+                            && self.bot_try_teleport_to_point(pid, own_z, intel, dx, dy, min_ring_r)
                         {
                             return true;
                         }
@@ -430,12 +515,12 @@ impl World {
         }
 
         // 2. Ring migration jump if HQ leveled up or bot is stuck in a lower ring than its equilibrium
-        let own_r = own_z.x.hypot(own_z.y);
         let own_r_eq = self.equilibrium_radius(pid);
         if own_r_eq >= RING1_RADIUS && own_r < min_ring_r {
-            for &(dx, dy) in &drone_pts {
-                if dx.hypot(dy) >= min_ring_r
-                    && self.bot_try_teleport_to_point(pid, dx, dy, min_ring_r)
+            let min_ring_r2 = min_ring_r * min_ring_r;
+            for &(dx, dy) in &intel.squad_unit_positions {
+                if dx * dx + dy * dy >= min_ring_r2
+                    && self.bot_try_teleport_to_point(pid, own_z, intel, dx, dy, min_ring_r)
                 {
                     return true;
                 }
@@ -443,8 +528,14 @@ impl World {
             // Fallback: step outward along own vision edge
             let ang = own_z.y.atan2(own_z.x);
             let edge_r = (own_r + 280.0).max(min_ring_r);
-            if self.bot_try_teleport_to_point(pid, ang.cos() * edge_r, ang.sin() * edge_r, min_ring_r)
-            {
+            if self.bot_try_teleport_to_point(
+                pid,
+                own_z,
+                intel,
+                ang.cos() * edge_r,
+                ang.sin() * edge_r,
+                min_ring_r,
+            ) {
                 return true;
             }
         }
@@ -492,6 +583,12 @@ impl World {
         }
     }
 
+    #[inline]
+    fn bot_free_slot_counts(&mut self, pid: PlayerId) -> (usize, usize) {
+        let cache = self.ensure_base_grid(pid);
+        (cache.free_hexes.len(), cache.free_rhombuses.len())
+    }
+
     /// Picks a tactically optimal free hex or rhombus coordinate for `build_kind`.
     fn bot_pick_build_slot(
         &mut self,
@@ -499,51 +596,46 @@ impl World {
         build_kind: u8,
         gen_aura_r: f32,
         intel: &BotPlayerIntel,
-    ) -> (Option<(f32, f32)>, usize, usize) {
-        let open_hexes = self.collect_player_open_large_hexes(pid);
-        let rhombuses = collect_rhombuses(&open_hexes);
-        let occupied = self.collect_player_occupied_tris(pid, &rhombuses);
+    ) -> Option<(f32, f32)> {
+        let _ = self.ensure_base_grid(pid);
+        let Some(cache) = self.base_grid_cache.get(&pid) else {
+            return None;
+        };
+        let rng = &mut self.rng;
 
-        let free_hex_list: Vec<(i32, i32)> = open_hexes
-            .iter()
-            .copied()
-            .filter(|&(q, r)| !(0..6_u8).any(|s| occupied.contains(&(q, r, s))))
-            .collect();
-        let free_rhombus_list: Vec<([TriCoord; 2], (f32, f32))> = rhombuses
-            .iter()
-            .copied()
-            .filter(|&(tris, _)| !occupied.contains(&tris[0]) && !occupied.contains(&tris[1]))
-            .collect();
-
-        let free_hex_count = free_hex_list.len();
-        let free_rhom_count = free_rhombus_list.len();
         let aura_r = (gen_aura_r - 4.0).max(40.0);
+        let aura_r2 = aura_r * aura_r;
 
-        let picked = if is_large_building(build_kind) {
+        if is_large_building(build_kind) {
             let mut best: Option<((f32, f32), f32)> = None;
-            for (q, r) in free_hex_list {
+            for &(q, r) in &cache.free_hexes {
                 let (cx, cy) = hex_to_rel(q, r);
-                let dist_hq = cx.hypot(cy);
-                let jitter = self.rng.gen_range(0.0..6.0);
+                let dist_hq2 = cx * cx + cy * cy;
+                let jitter = rng.gen_range(0.0..6.0);
                 let score = if build_kind == 2 {
-                    let aura_bonus = if intel
-                        .gen_positions
-                        .iter()
-                        .any(|&(gx, gy)| (cx - gx).hypot(cy - gy) <= aura_r)
-                    {
+                    let dist_hq = dist_hq2.sqrt();
+                    let aura_bonus = if intel.gen_positions.iter().any(|&(gx, gy)| {
+                        let dx = cx - gx;
+                        let dy = cy - gy;
+                        dx * dx + dy * dy <= aura_r2
+                    }) {
                         120.0
                     } else {
                         0.0
                     };
-                    let min_t_dist = intel
+                    let min_t_dist2 = intel
                         .turret_positions
                         .iter()
-                        .map(|&(tx, ty)| (cx - tx).hypot(cy - ty))
-                        .fold(140.0_f32, f32::min);
+                        .map(|&(tx, ty)| {
+                            let dx = cx - tx;
+                            let dy = cy - ty;
+                            dx * dx + dy * dy
+                        })
+                        .fold(140.0_f32 * 140.0, f32::min);
                     let ring_pref = -((dist_hq - 86.0).abs() * 0.45);
-                    aura_bonus + ring_pref + min_t_dist.min(140.0) * 0.3 + jitter
+                    aura_bonus + ring_pref + min_t_dist2.sqrt() * 0.3 + jitter
                 } else {
-                    let outer_pref = if dist_hq >= 55.0 { 24.0 } else { 0.0 };
+                    let outer_pref = if dist_hq2 >= 55.0 * 55.0 { 24.0 } else { 0.0 };
                     outer_pref + jitter
                 };
                 if best.as_ref().is_none_or(|&(_, bs)| score > bs) {
@@ -552,38 +644,56 @@ impl World {
             }
             best.map(|(pos, _)| pos)
         } else {
+            let unbuffed_turrets: Vec<(f32, f32)> = if build_kind != 5 {
+                intel
+                    .turret_positions
+                    .iter()
+                    .copied()
+                    .filter(|&(tx, ty)| {
+                        !intel.gen_positions.iter().any(|&(gx, gy)| {
+                            let dx = gx - tx;
+                            let dy = gy - ty;
+                            dx * dx + dy * dy <= aura_r2
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
             let mut best: Option<((f32, f32), f32)> = None;
-            for (tris, (mx, my)) in free_rhombus_list {
-                let dist_hq = mx.hypot(my);
-                let jitter = self.rng.gen_range(0.0..5.0);
+            for &(tris, (mx, my)) in &cache.free_rhombuses {
+                let dist_hq = (mx * mx + my * my).sqrt();
+                let jitter = rng.gen_range(0.0..5.0);
                 let score = if build_kind == 5 {
-                    let min_b_dist = intel
+                    let min_b_dist2 = intel
                         .beacon_positions
                         .iter()
-                        .map(|&(bx, by)| (mx - bx).hypot(my - by))
+                        .map(|&(bx, by)| {
+                            let dx = mx - bx;
+                            let dy = my - by;
+                            dx * dx + dy * dy
+                        })
                         .fold(f32::MAX, f32::min);
-                    let spacing_bonus = if min_b_dist >= 82.0 {
+                    let spacing_bonus = if min_b_dist2 >= 82.0 * 82.0 {
                         350.0
                     } else {
-                        min_b_dist * 2.0
+                        min_b_dist2.sqrt() * 2.0
                     };
                     dist_hq * 1.4 + spacing_bonus + jitter
                 } else {
-                    let turret_buff = intel
-                        .turret_positions
+                    let turret_buff = unbuffed_turrets
                         .iter()
                         .filter(|&&(tx, ty)| {
-                            (mx - tx).hypot(my - ty) <= aura_r
-                                && !intel
-                                    .gen_positions
-                                    .iter()
-                                    .any(|&(gx, gy)| (gx - tx).hypot(gy - ty) <= aura_r)
+                            let dx = mx - tx;
+                            let dy = my - ty;
+                            dx * dx + dy * dy <= aura_r2
                         })
                         .count() as f32
                         * 115.0;
                     let mut shared_hex_bonus = 0.0_f32;
                     for (hq_q, hq_r, _) in tris {
-                        if (0..6_u8).any(|s| occupied.contains(&(hq_q, hq_r, s))) {
+                        if (0..6_u8).any(|s| cache.occupied_tris.contains(&(hq_q, hq_r, s))) {
                             shared_hex_bonus += 65.0;
                         }
                     }
@@ -594,9 +704,7 @@ impl World {
                 }
             }
             best.map(|(pos, _)| pos)
-        };
-
-        (picked, free_hex_count, free_rhom_count)
+        }
     }
 
     /// Executes up to `max_actions` prioritized upgrades and builds for a single bot think tick.
@@ -645,8 +753,7 @@ impl World {
             }
 
             let threatened = intel.enemy_threat_power >= 1.5;
-            let (_, free_hexes, free_rhombuses) =
-                self.bot_pick_build_slot(pid, 3, gen_aura_r, intel);
+            let (free_hexes, free_rhombuses) = self.bot_free_slot_counts(pid);
 
             // 2. Hard opener essentials before branching out
             let opener_kind = if intel.gens < 2 && free_rhombuses > 0 {
@@ -662,9 +769,7 @@ impl World {
             if let Some(bk) = opener_kind {
                 let cost = self.building_build_cost(bk);
                 if energy >= cost {
-                    if let (Some((bx, by)), _, _) =
-                        self.bot_pick_build_slot(pid, bk, gen_aura_r, intel)
-                    {
+                    if let Some((bx, by)) = self.bot_pick_build_slot(pid, bk, gen_aura_r, intel) {
                         if self
                             .apply_command(
                                 pid,
@@ -832,9 +937,7 @@ impl World {
                     continue;
                 }
             } else if let Some((bk, _)) = affordable_build {
-                if let (Some((bx, by)), _, _) =
-                    self.bot_pick_build_slot(pid, bk, gen_aura_r, intel)
-                {
+                if let Some((bx, by)) = self.bot_pick_build_slot(pid, bk, gen_aura_r, intel) {
                     if self
                         .apply_command(
                             pid,
@@ -876,7 +979,7 @@ impl World {
             let mut r2_bots = 0_usize;
             for p in self.players.values().filter(|p| p.is_bot) {
                 if let Some(z) = self.zones.get(&p.id) {
-                    match Self::ring_for_radius(z.x.hypot(z.y)) {
+                    match Self::ring_for_radius((z.x * z.x + z.y * z.y).sqrt()) {
                         1 => r1_bots += 1,
                         2 => r2_bots += 1,
                         _ => {}
@@ -935,16 +1038,22 @@ impl World {
         if bot_intel.enemy_threat_power >= 3.5 {
             let mut closest_sq: Option<(u8, f32)> = None;
             for &(sq, _, cx, cy) in live_squads {
-                let d = (cx - own_z.x).hypot(cy - own_z.y);
-                if d <= 750.0 && closest_sq.is_none_or(|(_, bd)| d < bd) {
-                    closest_sq = Some((sq, d));
+                let dx = cx - own_z.x;
+                let dy = cy - own_z.y;
+                let d2 = dx * dx + dy * dy;
+                if d2 <= 750.0 * 750.0 && closest_sq.is_none_or(|(_, bd2)| d2 < bd2) {
+                    closest_sq = Some((sq, d2));
                 }
             }
             if let Some((sq, _)) = closest_sq {
+                let home_r = own_z.radius + 80.0;
+                let home_r2 = home_r * home_r;
                 let already_heading_home = squad_orders
                     .get(&sq)
                     .map(|o| {
-                        (o.target_x - own_z.x).hypot(o.target_y - own_z.y) <= own_z.radius + 80.0
+                        let dx = o.target_x - own_z.x;
+                        let dy = o.target_y - own_z.y;
+                        dx * dx + dy * dy <= home_r2
                     })
                     .unwrap_or(false);
                 if !already_heading_home {
@@ -964,10 +1073,12 @@ impl World {
     }
 
     /// Updates honest Fog-of-War intel (own vision + Top-3 leaders + teleport flashes).
+    #[allow(clippy::too_many_arguments)]
     fn bot_update_fog_intel(
         &self,
         pid: PlayerId,
         own_z: &Zone,
+        bot_intel: &BotPlayerIntel,
         bot_now_sec: f32,
         top3_leaders: &HashSet<PlayerId>,
         intel_map: &HashMap<PlayerId, BotPlayerIntel>,
@@ -980,8 +1091,11 @@ impl World {
             let Some(tp) = self.players.get(&z.player_id) else {
                 continue;
             };
-            let in_vision = self.has_vision_at(pid, z.x, z.y)
-                || (z.x - own_z.x).hypot(z.y - own_z.y) <= own_z.radius + z.radius + 360.0;
+            let zdx = z.x - own_z.x;
+            let zdy = z.y - own_z.y;
+            let combined_r = own_z.radius + z.radius + 360.0;
+            let in_vision = zdx * zdx + zdy * zdy <= combined_r * combined_r
+                || bot_has_vision_fast(own_z, bot_intel, z.x, z.y);
             let ez_intel = intel_map.get(&z.player_id);
             let ez_hq_lvl = ez_intel.map(|e| e.hq_lvl).unwrap_or(1);
 
@@ -1048,7 +1162,6 @@ impl World {
     #[allow(clippy::too_many_arguments)]
     fn bot_select_target(
         &self,
-        pid: PlayerId,
         arch: u8,
         profile: &ArchetypeProfile,
         own_z: &Zone,
@@ -1089,7 +1202,7 @@ impl World {
             let Some(cur_z) = self.zones.get(&target_id) else {
                 continue;
             };
-            let currently_visible = self.has_vision_at(pid, cur_z.x, cur_z.y);
+            let currently_visible = bot_has_vision_fast(own_z, bot_intel, cur_z.x, cur_z.y);
             if currently_visible && tp.spawn_protection_left > 0.0 {
                 continue;
             }
@@ -1115,7 +1228,11 @@ impl World {
                 .first()
                 .and_then(|&(sq, _, _, _)| squad_orders.get(&sq).copied());
             let is_current_target = current_primary_order
-                .map(|o| (kt.x - o.target_x).hypot(kt.y - o.target_y) <= 240.0)
+                .map(|o| {
+                    let dx = kt.x - o.target_x;
+                    let dy = kt.y - o.target_y;
+                    dx * dx + dy * dy <= 240.0 * 240.0
+                })
                 .unwrap_or(false);
             let eff_min_win = if is_current_target {
                 (min_win_ratio * 0.72).max(0.45)
@@ -1152,7 +1269,9 @@ impl World {
             let loot_value = 1.0
                 + f32::from(kt.gens) * profile.gen_loot_weight
                 + (kt.trophies.min(400.0) / 400.0) * 0.45;
-            let dist = (kt.x - own_z.x).hypot(kt.y - own_z.y);
+            let dx = kt.x - own_z.x;
+            let dy = kt.y - own_z.y;
+            let dist = (dx * dx + dy * dy).sqrt();
             let utility = (reward_weight
                 * crown_mult
                 * finisher_bonus
@@ -1190,12 +1309,18 @@ impl World {
         scout_ang: &mut f32,
     ) {
         if let Some((tx, ty)) = best_target {
-            let target_dist = (tx - own_z.x).hypot(ty - own_z.y);
+            let tdx = tx - own_z.x;
+            let tdy = ty - own_z.y;
+            let target_dist2 = tdx * tdx + tdy * tdy;
             // Direct ALL live combat squads only if the target actually shifted (>120px)
             for &(sq, _, _, _) in live_squads {
                 let already_on_target = squad_orders
                     .get(&sq)
-                    .map(|o| (o.target_x - tx).hypot(o.target_y - ty) <= 120.0)
+                    .map(|o| {
+                        let dx = o.target_x - tx;
+                        let dy = o.target_y - ty;
+                        dx * dx + dy * dy <= 120.0 * 120.0
+                    })
                     .unwrap_or(false);
                 if !already_on_target {
                     let _ = self.apply_command(
@@ -1212,7 +1337,7 @@ impl World {
             // Launch garrison if ready
             if garrison_ready {
                 let from_ring = Self::ring_for_radius(own_r);
-                let to_ring = Self::ring_for_radius(tx.hypot(ty));
+                let to_ring = Self::ring_for_radius((tx * tx + ty * ty).sqrt());
                 let _ = self.apply_command(
                     pid,
                     ClientMessage::ArmyCommand {
@@ -1238,7 +1363,7 @@ impl World {
                 .players
                 .get(&pid)
                 .and_then(|p| p.squads.keys().copied().min());
-            if profile.uses_reinforce && target_dist > 550.0 {
+            if profile.uses_reinforce && target_dist2 > 550.0 * 550.0 {
                 if let Some(msq) = main_sq {
                     if reinforce_sq != Some(msq) {
                         let _ = self.apply_command(
@@ -1281,7 +1406,11 @@ impl World {
                 for &(sq, _, cx, cy) in live_squads {
                     let need_next_wp = squad_orders
                         .get(&sq)
-                        .map(|o| (cx - o.target_x).hypot(cy - o.target_y) <= 170.0)
+                        .map(|o| {
+                            let dx = cx - o.target_x;
+                            let dy = cy - o.target_y;
+                            dx * dx + dy * dy <= 170.0 * 170.0
+                        })
                         .unwrap_or(true);
                     if need_next_wp {
                         *scout_ang = (*scout_ang + 1.15).rem_euclid(TAU);
@@ -1331,7 +1460,7 @@ impl World {
             if let Some(p) = self.players.get_mut(&pid) {
                 p.bot_think_cooldown -= dt;
                 if p.bot_think_cooldown <= 0.0 {
-                    p.bot_think_cooldown = think_cd;
+                    p.bot_think_cooldown = think_cd * self.rng.gen_range(0.92..1.08);
                     ready_bots.push((pid, tier, arch));
                 }
             }
@@ -1388,35 +1517,13 @@ impl World {
                 })
                 .unwrap_or((4, 0.0, None, HashMap::new()));
 
-            // Collect per-squad counts & centroids
-            let mut garrison_count = 0_usize;
-            let mut squad_stats: HashMap<u8, (usize, f32, f32)> = HashMap::new();
-            for u in &self.units {
-                if u.owner_id != pid || u.hp == 0 || u.kind == 4 {
-                    continue;
-                }
-                if u.squad == 0 {
-                    garrison_count += 1;
-                } else {
-                    let e = squad_stats.entry(u.squad).or_insert((0, 0.0, 0.0));
-                    e.0 += 1;
-                    e.1 += u.x;
-                    e.2 += u.y;
-                }
-            }
-            let mut live_squads: Vec<(u8, usize, f32, f32)> = squad_stats
-                .into_iter()
-                .map(|(sq, (cnt, sx, sy))| (sq, cnt, sx / cnt as f32, sy / cnt as f32))
-                .collect();
-            live_squads.sort_unstable_by_key(|&(sq, _, _, _)| sq);
-
             // 2. Priority Defense
             if self.bot_handle_defense(
                 pid,
                 &bot_intel,
                 &own_z,
                 reinforce_sq,
-                &live_squads,
+                &bot_intel.live_squads,
                 &squad_orders,
             ) {
                 intel_map.insert(pid, bot_intel);
@@ -1424,7 +1531,7 @@ impl World {
             }
 
             // 3. Update honest Fog-of-War intel
-            let own_r = own_z.x.hypot(own_z.y);
+            let own_r = (own_z.x * own_z.x + own_z.y * own_z.y).sqrt();
             let own_r_eq = self.equilibrium_radius(pid);
             let mut known = self
                 .players
@@ -1440,6 +1547,7 @@ impl World {
             self.bot_update_fog_intel(
                 pid,
                 &own_z,
+                &bot_intel,
                 bot_now_sec,
                 &top3_leaders,
                 &intel_map,
@@ -1448,15 +1556,14 @@ impl World {
 
             // 4. Pick best target by archetype utility
             let (garrison_ready, best_target) = self.bot_select_target(
-                pid,
                 arch,
                 &profile,
                 &own_z,
                 unit_cap,
-                garrison_count,
+                bot_intel.garrison_count,
                 &bot_intel,
                 &known,
-                &live_squads,
+                &bot_intel.live_squads,
                 &squad_orders,
                 leader_id,
             );
@@ -1464,7 +1571,9 @@ impl World {
             // 5. Honest vision-based tactical teleport (ring upgrade or forward jump)
             let _ = self.bot_try_tactical_teleport(
                 pid,
-                bot_intel.hq_lvl,
+                &own_z,
+                own_r,
+                &bot_intel,
                 best_target,
                 profile.uses_tactical_tp && bot_intel.enemy_threat_power < 1.0,
             );
@@ -1478,10 +1587,10 @@ impl World {
                 &own_z,
                 own_r,
                 own_r_eq,
-                garrison_count,
+                bot_intel.garrison_count,
                 garrison_ready,
                 reinforce_sq,
-                &live_squads,
+                &bot_intel.live_squads,
                 &squad_orders,
                 best_target,
                 &mut scout_ang,

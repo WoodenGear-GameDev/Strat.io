@@ -12,22 +12,34 @@ pub type TriCoord = (i32, i32, u8);
 
 pub const HEX_EDGE_DIRS: [(i32, i32); 6] = [(1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)];
 
+const SQRT3: f32 = 1.7320508;
+const HEX_HALF_W: f32 = HEX_SIZE * (SQRT3 * 0.5);
+const HEX_HALF_H: f32 = HEX_SIZE * 0.5;
+const HEX_CORNERS: [(f32, f32); 6] = [
+    (HEX_HALF_W, -HEX_HALF_H),
+    (HEX_HALF_W, HEX_HALF_H),
+    (0.0, HEX_SIZE),
+    (-HEX_HALF_W, HEX_HALF_H),
+    (-HEX_HALF_W, -HEX_HALF_H),
+    (0.0, -HEX_SIZE),
+];
+
 pub fn is_large_building(kind: u8) -> bool {
     kind == 0 || kind == 2 || kind == 3
 }
 
+#[inline]
 pub fn hex_to_rel(q: i32, r: i32) -> (f32, f32) {
-    let sqrt3 = 3.0_f32.sqrt();
     let qf = q as f32;
     let rf = r as f32;
-    let x = HEX_SIZE * (sqrt3 * qf + (sqrt3 / 2.0) * rf);
+    let x = HEX_SIZE * (SQRT3 * qf + (SQRT3 * 0.5) * rf);
     let y = HEX_SIZE * 1.5 * rf;
     (x, y)
 }
 
+#[inline]
 pub fn rel_to_hex_round(x: f32, y: f32) -> (i32, i32) {
-    let sqrt3 = 3.0_f32.sqrt();
-    let qf = ((sqrt3 / 3.0) * x - (1.0 / 3.0) * y) / HEX_SIZE;
+    let qf = ((SQRT3 / 3.0) * x - (1.0 / 3.0) * y) / HEX_SIZE;
     let rf = ((2.0 / 3.0) * y) / HEX_SIZE;
     let sf = -qf - rf;
 
@@ -52,10 +64,11 @@ pub fn hex_dist(q1: i32, r1: i32, q2: i32, r2: i32) -> i32 {
     ((q1 - q2).abs() + (q1 + r1 - q2 - r2).abs() + (r1 - r2).abs()) / 2
 }
 
+#[inline]
 pub fn hex_vertex(q: i32, r: i32, i: u8) -> (f32, f32) {
     let (cx, cy) = hex_to_rel(q, r);
-    let ang = f32::from(i) * (TAU / 6.0) - TAU / 12.0;
-    (cx + ang.cos() * HEX_SIZE, cy + ang.sin() * HEX_SIZE)
+    let (ox, oy) = HEX_CORNERS[(i % 6) as usize];
+    (cx + ox, cy + oy)
 }
 
 pub fn collect_rhombuses(open_hexes: &HashSet<(i32, i32)>) -> Vec<([TriCoord; 2], (f32, f32))> {
@@ -64,17 +77,21 @@ pub fn collect_rhombuses(open_hexes: &HashSet<(i32, i32)>) -> Vec<([TriCoord; 2]
         let (cx, cy) = hex_to_rel(q, r);
         for s in 0..6_u8 {
             let s_next = (s + 1) % 6;
-            let (vx1, vy1) = hex_vertex(q, r, s_next);
+            let (ox1, oy1) = HEX_CORNERS[s_next as usize];
+            let vx1 = cx + ox1;
+            let vy1 = cy + oy1;
             out.push((
                 [(q, r, s), (q, r, s_next)],
-                ((cx + vx1) * 0.5, (cy + vy1) * 0.5),
+                (cx + ox1 * 0.5, cy + oy1 * 0.5),
             ));
 
             let (dq, dr) = HEX_EDGE_DIRS[s as usize];
             let nq = q + dq;
             let nr = r + dr;
             if open_hexes.contains(&(nq, nr)) && (q, r) < (nq, nr) {
-                let (vx0, vy0) = hex_vertex(q, r, s);
+                let (ox0, oy0) = HEX_CORNERS[s as usize];
+                let vx0 = cx + ox0;
+                let vy0 = cy + oy0;
                 let s_opp = (s + 3) % 6;
                 out.push((
                     [(q, r, s), (nq, nr, s_opp)],
@@ -141,15 +158,18 @@ impl World {
     pub(super) fn polar_move_dir(ux: f32, uy: f32, tx: f32, ty: f32) -> (f32, f32) {
         let dx = tx - ux;
         let dy = ty - uy;
-        let dist = dx.hypot(dy);
-        if dist <= 0.001 {
+        let dist2 = dx * dx + dy * dy;
+        if dist2 <= 1e-6 {
             return (0.0, 0.0);
         }
-        let ur = ux.hypot(uy);
-        let tr = tx.hypot(ty);
-        if dist < 180.0 || ur < 90.0 || tr < 90.0 {
+        let dist = dist2.sqrt();
+        let ur2 = ux * ux + uy * uy;
+        let tr2 = tx * tx + ty * ty;
+        if dist2 < 180.0 * 180.0 || ur2 < 90.0 * 90.0 || tr2 < 90.0 * 90.0 {
             return (dx / dist, dy / dist);
         }
+        let ur = ur2.sqrt();
+        let tr = tr2.sqrt();
         let ut = uy.atan2(ux);
         let tt = ty.atan2(tx);
         let mut dtheta = tt - ut;
@@ -174,8 +194,9 @@ impl World {
         let arc = ((ur + tr) * 0.5) * dtheta;
         let vx = rx * dr + tx_hat * arc;
         let vy = ry * dr + ty_hat * arc;
-        let len = vx.hypot(vy);
-        if len > 0.001 {
+        let len2 = vx * vx + vy * vy;
+        if len2 > 1e-6 {
+            let len = len2.sqrt();
             (vx / len, vy / len)
         } else {
             (dx / dist, dy / dist)
@@ -184,21 +205,29 @@ impl World {
 
     pub(super) fn has_vision_at(&self, player_id: PlayerId, tx: f32, ty: f32) -> bool {
         if let Some(z) = self.zones.get(&player_id) {
-            if (tx - z.x).hypot(ty - z.y) <= z.radius + 360.0 {
+            let dx = tx - z.x;
+            let dy = ty - z.y;
+            let r = z.radius + 360.0;
+            if dx * dx + dy * dy <= r * r {
                 return true;
             }
             for b in &self.buildings {
                 if b.owner_id == player_id && b.kind == 5 {
                     let vr = beacon_ext_radius(b.level) + 220.0;
-                    if (tx - (z.x + b.rel_x)).hypot(ty - (z.y + b.rel_y)) <= vr {
+                    let bdx = tx - (z.x + b.rel_x);
+                    let bdy = ty - (z.y + b.rel_y);
+                    if bdx * bdx + bdy * bdy <= vr * vr {
                         return true;
                     }
                 }
             }
         }
+        const UNIT_VR2: f32 = 290.0 * 290.0;
         for u in &self.units {
             if u.owner_id == player_id && u.hp > 0 && u.kind != 4 {
-                if (tx - u.x).hypot(ty - u.y) <= 290.0 {
+                let dx = tx - u.x;
+                let dy = ty - u.y;
+                if dx * dx + dy * dy <= UNIT_VR2 {
                     return true;
                 }
             }

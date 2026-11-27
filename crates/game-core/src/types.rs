@@ -58,6 +58,7 @@ pub struct PlayerState {
     pub trophies: f32,
     pub total_energy_earned: f32,
     pub unit_cap: u16,
+    pub hq_level: u8,
     pub army_mode: ArmyMode,
     pub rally_x: f32,
     pub rally_y: f32,
@@ -140,6 +141,9 @@ pub struct Unit {
     pub home_id: EntityId,
     pub knockback_vx: f32,
     pub knockback_vy: f32,
+    pub target_id: EntityId,
+    pub target_idx: usize,
+    pub target_is_building: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -154,6 +158,9 @@ pub struct Projectile {
     pub vy: f32,
     pub target_x: f32,
     pub target_y: f32,
+    pub target_id: EntityId,
+    pub target_idx: usize,
+    pub target_is_building: bool,
     pub damage: u16,
     pub ttl: f32,
     pub splash_radius: f32,

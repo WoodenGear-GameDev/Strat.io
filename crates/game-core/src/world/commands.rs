@@ -161,6 +161,7 @@ impl World {
                 json!({"bkind": building_kind, "cost": cost}),
             );
         }
+        self.invalidate_base_grid(player_id);
         self.recompute_unit_cap(player_id);
         None
     }
@@ -238,6 +239,7 @@ impl World {
             let shift_x = dest_x - old_x;
             let shift_y = dest_y - old_y;
             if let Some(pl) = self.players.get_mut(&player_id) {
+                pl.hq_level = new_level;
                 pl.spawn_protection_left = pl.spawn_protection_left.max(3.0);
                 if pl.army_mode == ArmyMode::Defend {
                     pl.rally_x = dest_x;
@@ -284,6 +286,9 @@ impl World {
             );
         }
 
+        if kind == 0 || kind == 5 {
+            self.invalidate_base_grid(player_id);
+        }
         self.recompute_unit_cap(player_id);
         None
     }
@@ -317,6 +322,7 @@ impl World {
         } else {
             self.recompute_unit_cap(player_id);
         }
+        self.invalidate_base_grid(player_id);
         None
     }
 

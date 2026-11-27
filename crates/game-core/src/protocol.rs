@@ -249,9 +249,68 @@ impl ClientMessage {
     }
 }
 
+pub const SNAPSHOT_HEADER_BYTES: usize = 26;
+pub const SNAPSHOT_ZONE_BYTES: usize = 20;
+pub const SNAPSHOT_BUILDING_BYTES: usize = 25;
+pub const SNAPSHOT_UNIT_BYTES: usize = 22;
+pub const SNAPSHOT_PROJECTILE_BYTES: usize = 17;
+
+#[allow(clippy::too_many_arguments)]
+pub fn write_snapshot_header(
+    out: &mut Vec<u8>,
+    tick: u32,
+    score: u32,
+    r_eq: f32,
+    energy: f32,
+    trophies: f32,
+    unit_count: u16,
+    unit_cap: u16,
+    teleport_cd_sec: u8,
+) {
+    out.push(0x82);
+    out.extend_from_slice(&tick.to_le_bytes());
+    out.extend_from_slice(&score.to_le_bytes());
+    out.extend_from_slice(&r_eq.to_le_bytes());
+    out.extend_from_slice(&energy.to_le_bytes());
+    out.extend_from_slice(&trophies.to_le_bytes());
+    out.extend_from_slice(&unit_count.to_le_bytes());
+    out.extend_from_slice(&unit_cap.to_le_bytes());
+    out.push(teleport_cd_sec);
+}
+
 impl ServerMessage {
     pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(128);
+        let cap = match self {
+            Self::Welcome { .. } => 10,
+            Self::Snapshot {
+                zones,
+                buildings,
+                units,
+                projectiles,
+                ..
+            } => {
+                SNAPSHOT_HEADER_BYTES
+                    + 2
+                    + zones.len() * SNAPSHOT_ZONE_BYTES
+                    + 2
+                    + buildings.len() * SNAPSHOT_BUILDING_BYTES
+                    + 2
+                    + units.len() * SNAPSHOT_UNIT_BYTES
+                    + 2
+                    + projectiles.len() * SNAPSHOT_PROJECTILE_BYTES
+            }
+            Self::PlayerMeta { players } => {
+                3 + players
+                    .iter()
+                    .map(|p| 9 + p.name.len().min(u16::MAX as usize))
+                    .sum::<usize>()
+            }
+            Self::MatchLeaderboard { entries } => 2 + entries.len().min(u8::MAX as usize) * 8,
+            Self::GameOver { .. } => 18,
+            Self::ActionError { .. } => 2,
+            Self::Pong { .. } => 9,
+        };
+        let mut out = Vec::with_capacity(cap);
         match self {
             Self::Welcome {
                 player_id,
@@ -277,15 +336,17 @@ impl ServerMessage {
                 units,
                 projectiles,
             } => {
-                out.push(0x82);
-                out.extend_from_slice(&tick.to_le_bytes());
-                out.extend_from_slice(&score.to_le_bytes());
-                out.extend_from_slice(&r_eq.to_le_bytes());
-                out.extend_from_slice(&energy.to_le_bytes());
-                out.extend_from_slice(&trophies.to_le_bytes());
-                out.extend_from_slice(&unit_count.to_le_bytes());
-                out.extend_from_slice(&unit_cap.to_le_bytes());
-                out.push(*teleport_cd_sec);
+                write_snapshot_header(
+                    &mut out,
+                    *tick,
+                    *score,
+                    *r_eq,
+                    *energy,
+                    *trophies,
+                    *unit_count,
+                    *unit_cap,
+                    *teleport_cd_sec,
+                );
 
                 out.extend_from_slice(&(zones.len() as u16).to_le_bytes());
                 for z in zones {

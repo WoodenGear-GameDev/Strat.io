@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -243,7 +243,7 @@ async fn run_room(
     reporter: ReporterConfig,
 ) {
     let tick_rate = config.world.tick_rate.max(1);
-    let dt = 1.0 / f32::from(tick_rate);
+    let nominal_dt = 1.0 / f32::from(tick_rate);
     let tick_ms = (1000 / u64::from(tick_rate)).max(1);
     let seed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -263,16 +263,29 @@ async fn run_room(
     let mut sessions: HashMap<ConnId, ClientSession> = HashMap::new();
     let mut interval = tokio::time::interval(Duration::from_millis(tick_ms));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut last_tick_at = Instant::now()
+        .checked_sub(Duration::from_millis(tick_ms))
+        .unwrap_or_else(Instant::now);
+    let mut last_lb_sent = Instant::now();
+    let mut last_slow_tick_log: Option<Instant> = None;
 
     loop {
         tokio::select! {
             _ = interval.tick() => {
+                let tick_start = Instant::now();
+                let raw_dt = tick_start.duration_since(last_tick_at).as_secs_f32();
+                last_tick_at = tick_start;
+                // Preserve 1:1 real-time simulation speed even if TPS drops (down to 4 TPS / 0.25s max step).
+                let step_dt = raw_dt.clamp(nominal_dt * 0.5, 0.25);
+
                 while let Ok(ev) = rx.try_recv() {
                     handle_room_event(&mut world, &mut sessions, ev);
                 }
 
                 let prev_players = world.players.len();
-                let game_overs = world.step(dt);
+                let step_start = Instant::now();
+                let game_overs = world.step(step_dt);
+                let step_ms = step_start.elapsed().as_secs_f64() * 1000.0;
                 if !game_overs.is_empty() {
                     for ev in game_overs {
                         spawn_report_match(&reporter, &ev);
@@ -300,16 +313,49 @@ async fn run_room(
                     }
                 }
 
-                for session in sessions.values() {
-                    if let Some(snap) = world.build_snapshot(session.player_id) {
-                        let _ = session.tx.send(snap.encode());
+                let snap_start = Instant::now();
+                if !sessions.is_empty() {
+                    let (shared_tail, unit_counts) = world.build_shared_snapshot_tail_with_counts();
+                    for session in sessions.values() {
+                        let unit_count = unit_counts.get(&session.player_id).copied().unwrap_or(0);
+                        if let Some(encoded) = world.encode_snapshot_with_tail_and_count(
+                            session.player_id,
+                            unit_count,
+                            &shared_tail,
+                        ) {
+                            let _ = session.tx.send(encoded);
+                        }
                     }
                 }
+                let snap_ms = snap_start.elapsed().as_secs_f64() * 1000.0;
 
-                if world.tick % u32::from(tick_rate) == 0 && !sessions.is_empty() {
+                if !sessions.is_empty() && tick_start.duration_since(last_lb_sent) >= Duration::from_secs(1) {
+                    last_lb_sent = tick_start;
                     let lb = world.build_leaderboard().encode();
                     for session in sessions.values() {
                         let _ = session.tx.send(lb.clone());
+                    }
+                }
+
+                let total_ms = tick_start.elapsed().as_secs_f64() * 1000.0;
+                if total_ms > 40.0 {
+                    let now = Instant::now();
+                    let should_log = last_slow_tick_log
+                        .map(|prev| now.duration_since(prev) >= Duration::from_secs(2))
+                        .unwrap_or(true);
+                    if should_log {
+                        last_slow_tick_log = Some(now);
+                        warn!(
+                            "Slow tick: tick={} total_ms={:.2} step_ms={:.2} snap_ms={:.2} players={} buildings={} units={} projs={}",
+                            world.tick,
+                            total_ms,
+                            step_ms,
+                            snap_ms,
+                            world.players.len(),
+                            world.buildings.len(),
+                            world.units.len(),
+                            world.projectiles.len(),
+                        );
                     }
                 }
             }

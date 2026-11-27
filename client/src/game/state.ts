@@ -119,6 +119,7 @@ export class ClientGameState {
   hasPointerHover = false;
 
   snapshotTime = performance.now();
+  lastSnapArrivalMs = 0;
   tickIntervalMs = 50;
 
   playerNames = new Map<number, string>();
@@ -127,6 +128,7 @@ export class ClientGameState {
   prevZones = new Map<number, SnapshotZone>();
   zones = new Map<number, SnapshotZone>();
 
+  private buildingBuf = new Map<number, SnapshotBuilding>();
   buildings = new Map<number, SnapshotBuilding>();
 
   prevUnits = new Map<number, SnapshotUnit>();
@@ -143,14 +145,23 @@ export class ClientGameState {
 
   applySnapshot(msg: Extract<ServerMessage, { type: "Snapshot" }>): void {
     const now = performance.now();
-    this.tickIntervalMs = 1000 / Math.max(1, this.tickRate);
+    const baseInterval = 1000 / Math.max(1, this.tickRate);
+    if (this.lastSnapArrivalMs > 0) {
+      const rawInterval = now - this.lastSnapArrivalMs;
+      if (rawInterval >= 15 && rawInterval <= 500) {
+        const minInterval = Math.max(30, baseInterval * 0.8);
+        const smoothed = this.tickIntervalMs * 0.75 + rawInterval * 0.25;
+        this.tickIntervalMs = Math.max(minInterval, Math.min(400, smoothed));
+      }
+    } else {
+      this.tickIntervalMs = Math.max(30, Math.min(400, baseInterval));
+    }
+    this.lastSnapArrivalMs = now;
     this.snapshotTime = now;
 
-    this.prevZones = new Map(this.zones);
-    this.prevUnits = new Map(this.units);
-    this.prevProjectiles = new Map(this.projectiles);
-
-    const nextUnits = new Map<number, SnapshotUnit>();
+    // Double-buffer units: reuse old prevUnits as target for the new snapshot
+    const nextUnits = this.prevUnits;
+    nextUnits.clear();
     for (const u of msg.units) {
       nextUnits.set(u.id, u);
       if (u.ownerId === this.playerId) {
@@ -178,9 +189,11 @@ export class ClientGameState {
       }
     }
 
-    const nextZonesMap = new Map<number, SnapshotZone>();
+    // Double-buffer zones: reuse old prevZones as target for the new snapshot
+    const nextZones = this.prevZones;
+    nextZones.clear();
     for (const z of msg.zones) {
-      nextZonesMap.set(z.playerId, z);
+      nextZones.set(z.playerId, z);
       const oldZ = this.zones.get(z.playerId);
       if (oldZ && Math.hypot(z.x - oldZ.x, z.y - oldZ.y) > 220) {
         this.teleportFlashes.push({ x: oldZ.x, y: oldZ.y, startMs: now, untilMs: now + 6500 });
@@ -188,7 +201,9 @@ export class ClientGameState {
       }
     }
 
-    const nextBuildings = new Map<number, SnapshotBuilding>();
+    // Double-buffer buildings: reuse buildingBuf as target for the new snapshot
+    const nextBuildings = this.buildingBuf;
+    nextBuildings.clear();
     for (const b of msg.buildings) {
       nextBuildings.set(b.id, b);
       const oldB = this.buildings.get(b.id);
@@ -197,7 +212,7 @@ export class ClientGameState {
           this.lastDamagedAtMs = now;
         }
         this.buildingHitEffects.set(b.id, { startMs: now, untilMs: now + 220 });
-        const z = nextZonesMap.get(b.ownerId) ?? this.zones.get(b.ownerId);
+        const z = nextZones.get(b.ownerId) ?? this.zones.get(b.ownerId);
         if (z) {
           const bx = z.x + b.relX;
           const by = z.y + b.relY;
@@ -235,7 +250,7 @@ export class ClientGameState {
           if (
             oldB.kind !== 0 &&
             id !== this.lastSoldBuildingId &&
-            msg.zones.some((nz) => nz.playerId === oldB.ownerId)
+            nextZones.has(oldB.ownerId)
           ) {
             this.buildingRuins.push({
               ownerId: oldB.ownerId,
@@ -252,9 +267,16 @@ export class ClientGameState {
         }
       }
     }
-    this.buildingRuins = this.buildingRuins.filter(
-      (r) => r.expiresAtMs > now && msg.zones.some((nz) => nz.playerId === r.ownerId),
-    );
+    if (this.buildingRuins.length > 0) {
+      let writeIdx = 0;
+      for (let i = 0; i < this.buildingRuins.length; i++) {
+        const r = this.buildingRuins[i];
+        if (r.expiresAtMs > now && nextZones.has(r.ownerId)) {
+          this.buildingRuins[writeIdx++] = r;
+        }
+      }
+      this.buildingRuins.length = writeIdx;
+    }
 
     this.tick = msg.tick;
     this.score = msg.score;
@@ -265,10 +287,14 @@ export class ClientGameState {
     this.unitCap = msg.unitCap;
     this.teleportCdSec = msg.teleportCdSec;
 
-    this.zones.clear();
-    for (const z of msg.zones) this.zones.set(z.playerId, z);
+    // Swap double-buffered maps
+    this.prevZones = this.zones;
+    this.zones = nextZones;
 
+    this.buildingBuf = this.buildings;
     this.buildings = nextBuildings;
+
+    this.prevUnits = this.units;
     this.units = nextUnits;
 
     // Track squad continuity, auto-merges, and short hold on squad wipe
@@ -348,8 +374,12 @@ export class ClientGameState {
       }
     }
 
-    this.projectiles.clear();
-    for (const p of msg.projectiles) this.projectiles.set(p.id, p);
+    // Double-buffer projectiles: reuse old prevProjectiles as target for the new snapshot
+    const nextProjectiles = this.prevProjectiles;
+    nextProjectiles.clear();
+    for (const p of msg.projectiles) nextProjectiles.set(p.id, p);
+    this.prevProjectiles = this.projectiles;
+    this.projectiles = nextProjectiles;
 
     if (this.selectedBuildingId !== null && !this.buildings.has(this.selectedBuildingId)) {
       this.selectedBuildingId = null;
@@ -878,10 +908,13 @@ export class ClientGameState {
     this.pendingTeleport = null;
     this.selectedBuildingId = null;
     this.cameraAnchor = "hq";
+    this.lastSnapArrivalMs = 0;
+    this.tickIntervalMs = 1000 / Math.max(1, this.tickRate);
     this.playerNames.clear();
     this.leaderboard = [];
     this.prevZones.clear();
     this.zones.clear();
+    this.buildingBuf.clear();
     this.buildings.clear();
     this.prevUnits.clear();
     this.units.clear();

@@ -1,24 +1,136 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub const MAX_KIND_SLOTS: usize = 8;
+
+#[derive(Debug, Clone, Copy)]
+pub struct UnitFastStats {
+    pub radius: f32,
+    pub hp: f32,
+    pub damage: f32,
+    pub attack_cooldown_sec: f32,
+    pub speed: f32,
+    pub range: f32,
+    pub aggro_range: f32,
+    pub cost: f32,
+    pub supply_cost: u16,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceConfig {
     pub world: WorldConfig,
     pub buildings: HashMap<String, BuildingConfig>,
     pub units: HashMap<String, UnitConfig>,
+    #[serde(skip)]
+    building_by_kind_cache: [Option<BuildingConfig>; MAX_KIND_SLOTS],
+    #[serde(skip)]
+    unit_by_kind_cache: [Option<UnitConfig>; MAX_KIND_SLOTS],
+    #[serde(skip)]
+    caches_built: bool,
 }
 
 impl BalanceConfig {
     pub fn from_json(raw: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(raw)
+        let mut cfg: Self = serde_json::from_str(raw)?;
+        cfg.rebuild_caches();
+        Ok(cfg)
     }
 
+    pub fn rebuild_caches(&mut self) {
+        self.building_by_kind_cache = std::array::from_fn(|_| None);
+        for b in self.buildings.values() {
+            let idx = usize::from(b.kind_id);
+            if idx < MAX_KIND_SLOTS {
+                self.building_by_kind_cache[idx] = Some(b.clone());
+            }
+        }
+        self.unit_by_kind_cache = std::array::from_fn(|_| None);
+        for u in self.units.values() {
+            let idx = usize::from(u.kind_id);
+            if idx < MAX_KIND_SLOTS {
+                self.unit_by_kind_cache[idx] = Some(u.clone());
+            }
+        }
+        self.caches_built = true;
+    }
+
+    #[inline]
     pub fn building_by_kind(&self, kind_id: u8) -> Option<&BuildingConfig> {
+        if self.caches_built {
+            let idx = usize::from(kind_id);
+            if idx < MAX_KIND_SLOTS {
+                return self.building_by_kind_cache[idx].as_ref();
+            }
+        }
         self.buildings.values().find(|b| b.kind_id == kind_id)
     }
 
+    #[inline]
     pub fn unit_by_kind(&self, kind_id: u8) -> Option<&UnitConfig> {
+        if self.caches_built {
+            let idx = usize::from(kind_id);
+            if idx < MAX_KIND_SLOTS {
+                return self.unit_by_kind_cache[idx].as_ref();
+            }
+        }
         self.units.values().find(|u| u.kind_id == kind_id)
+    }
+
+    #[inline]
+    pub fn unit_fast_stats(&self, kind_id: u8) -> UnitFastStats {
+        if let Some(c) = self.unit_by_kind(kind_id) {
+            UnitFastStats {
+                radius: c.radius,
+                hp: c.hp,
+                damage: c.damage,
+                attack_cooldown_sec: c.attack_cooldown_sec,
+                speed: c.speed,
+                range: if kind_id == 1 && c.range <= 0.0 {
+                    175.0
+                } else {
+                    c.range
+                },
+                aggro_range: c.aggro_range,
+                cost: c.cost.max(0.0),
+                supply_cost: c.supply_cost.max(1),
+            }
+        } else {
+            match kind_id {
+                1 => UnitFastStats {
+                    radius: 9.5,
+                    hp: 44.0,
+                    damage: 15.0,
+                    attack_cooldown_sec: 0.90,
+                    speed: 158.0,
+                    range: 175.0,
+                    aggro_range: 300.0,
+                    cost: 24.0,
+                    supply_cost: 1,
+                },
+                2 => UnitFastStats {
+                    radius: 14.0,
+                    hp: 540.0,
+                    damage: 40.0,
+                    attack_cooldown_sec: 0.95,
+                    speed: 128.0,
+                    range: 0.0,
+                    aggro_range: 290.0,
+                    cost: 65.0,
+                    supply_cost: 3,
+                },
+                _ => UnitFastStats {
+                    radius: 8.5,
+                    hp: 78.0,
+                    damage: 13.0,
+                    attack_cooldown_sec: 0.55,
+                    speed: 235.0,
+                    range: 0.0,
+                    aggro_range: 290.0,
+                    cost: 14.0,
+                    supply_cost: 1,
+                },
+            }
+        }
     }
 }
 

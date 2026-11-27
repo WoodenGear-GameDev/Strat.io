@@ -27,6 +27,7 @@ export class CanvasRenderer {
   private height = 0;
   private camera = new CameraController();
   private unitAngles = new Map<number, number>();
+  private zonePositionsBuf = new Map<number, ZonePosition>();
 
   get camX(): number {
     return this.camera.camX;
@@ -182,7 +183,8 @@ export class CanvasRenderer {
     state: ClientGameState,
     alpha: number,
   ): Map<number, ZonePosition> {
-    const positions = new Map<number, ZonePosition>();
+    const positions = this.zonePositionsBuf;
+    positions.clear();
     for (const z of state.zones.values()) {
       const prev = state.prevZones.get(z.playerId);
       const x = prev ? prev.x + (z.x - prev.x) * alpha : z.x;

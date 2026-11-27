@@ -9,7 +9,7 @@ mod units;
 
 pub use hex::*;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::f32::consts::TAU;
 use std::time::Instant;
 
@@ -18,14 +18,29 @@ use rand::{Rng, SeedableRng};
 use serde_json::json;
 
 use crate::config::BalanceConfig;
+use crate::spatial::SpatialGrid;
 use crate::telemetry::{TelemetryLogger, SRC_UNKNOWN};
 use crate::types::{
     ArmyMode, Building, EntityId, GameOverEvent, PlayerId, PlayerState, Projectile, Unit, Zone,
 };
 
+#[derive(Debug, Clone)]
+pub(super) struct BaseGridCache {
+    pub occupied_tris: HashSet<TriCoord>,
+    pub free_hexes: Vec<(i32, i32)>,
+    pub free_rhombuses: Vec<([TriCoord; 2], (f32, f32))>,
+}
+
+pub(super) type UnitSnap = (EntityId, PlayerId, f32, f32, u16, u8, f32);
+pub(super) type BuildingSnap = Option<(EntityId, PlayerId, f32, f32, f32, u16, u8)>;
+
 pub struct World {
     pub config: BalanceConfig,
     pub tick: u32,
+    pub elapsed_sec: f32,
+    pub(super) ring_score_accum: f32,
+    pub(super) cluster_accum: f32,
+    pub(super) last_tlog_snap_sec: f32,
     pub(super) seed: u64,
     pub(super) next_entity_id: EntityId,
     pub(super) next_player_id: PlayerId,
@@ -36,6 +51,11 @@ pub struct World {
     pub units: Vec<Unit>,
     pub projectiles: Vec<Projectile>,
     pub telemetry: Option<TelemetryLogger>,
+    pub(super) unit_grid: SpatialGrid,
+    pub(super) building_grid: SpatialGrid,
+    pub(super) building_world_snap: Vec<BuildingSnap>,
+    pub(super) unit_world_snap: Vec<UnitSnap>,
+    pub(super) base_grid_cache: HashMap<PlayerId, BaseGridCache>,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -44,6 +64,7 @@ pub struct StepTimings {
     pub bots_ns: u64,
     pub push_repulsion_ns: u64,
     pub eco_spawn_ns: u64,
+    pub grid_ns: u64,
     pub turrets_ns: u64,
     pub projectiles_ns: u64,
     pub units_ns: u64,
@@ -52,13 +73,21 @@ pub struct StepTimings {
     pub telemetry_ns: u64,
     pub snapshot_ns: u64,
     pub max_tick_ns: u64,
+    pub max_tick_num: u32,
+    pub max_tick_phases_ns: [u64; 9],
 }
 
 impl World {
-    pub fn new(config: BalanceConfig, seed: u64) -> Self {
+    pub fn new(mut config: BalanceConfig, seed: u64) -> Self {
+        config.rebuild_caches();
+        let map_r = config.world.map_radius;
         Self {
             config,
             tick: 0,
+            elapsed_sec: 0.0,
+            ring_score_accum: 0.0,
+            cluster_accum: 0.0,
+            last_tlog_snap_sec: 0.0,
             seed,
             next_entity_id: 1,
             next_player_id: 1,
@@ -69,6 +98,59 @@ impl World {
             units: Vec::new(),
             projectiles: Vec::new(),
             telemetry: None,
+            unit_grid: SpatialGrid::new_for_world(map_r, 80.0),
+            building_grid: SpatialGrid::new_for_world(map_r, 96.0),
+            building_world_snap: Vec::with_capacity(2048),
+            unit_world_snap: Vec::with_capacity(2048),
+            base_grid_cache: HashMap::new(),
+        }
+    }
+
+    #[inline]
+    pub(super) fn invalidate_base_grid(&mut self, player_id: PlayerId) {
+        self.base_grid_cache.remove(&player_id);
+    }
+
+    pub(super) fn rebuild_spatial_grids(&mut self) {
+        self.unit_grid.clear();
+        self.unit_world_snap.clear();
+        let r0 = self.config.unit_fast_stats(0).radius;
+        let r1 = self.config.unit_fast_stats(1).radius;
+        let r2 = self.config.unit_fast_stats(2).radius;
+        for (i, u) in self.units.iter().enumerate() {
+            let r = match u.kind {
+                1 => r1,
+                2 => r2,
+                _ => r0,
+            };
+            self.unit_world_snap
+                .push((u.id, u.owner_id, u.x, u.y, u.hp, u.kind, r));
+            if u.hp > 0 {
+                self.unit_grid.insert(i, u.x, u.y);
+            }
+        }
+
+        self.building_grid.clear();
+        self.building_world_snap.clear();
+        for (bi, b) in self.buildings.iter().enumerate() {
+            if b.hp == 0 {
+                self.building_world_snap.push(None);
+                continue;
+            }
+            let Some(z) = self.zones.get(&b.owner_id) else {
+                self.building_world_snap.push(None);
+                continue;
+            };
+            let br = self
+                .config
+                .building_by_kind(b.kind)
+                .map(|c| c.radius)
+                .unwrap_or(22.0);
+            let bx = z.x + b.rel_x;
+            let by = z.y + b.rel_y;
+            self.building_world_snap
+                .push(Some((b.id, b.owner_id, bx, by, br, b.hp, b.kind)));
+            self.building_grid.insert(bi, bx, by);
         }
     }
 
@@ -172,6 +254,7 @@ impl World {
             trophies: seed_trophies,
             total_energy_earned: seed_earned,
             unit_cap: base_cap,
+            hq_level: start_hq_lvl,
             army_mode: ArmyMode::Defend,
             rally_x: spawn_x,
             rally_y: spawn_y,
@@ -182,7 +265,11 @@ impl World {
             survival_sec: 0.0,
             is_bot: bot_tier > 0,
             bot_tier,
-            bot_think_cooldown: 1.0,
+            bot_think_cooldown: if bot_tier > 0 {
+                self.rng.gen_range(0.05..1.05)
+            } else {
+                1.0
+            },
             teleport_cooldown_left: 0.0,
             spawn_counter: 0,
             last_damaged_sec: -100.0,
@@ -236,6 +323,7 @@ impl World {
     pub fn remove_player(&mut self, player_id: PlayerId) {
         self.players.remove(&player_id);
         self.zones.remove(&player_id);
+        self.base_grid_cache.remove(&player_id);
         self.buildings.retain(|b| b.owner_id != player_id);
         self.units.retain(|u| u.owner_id != player_id);
         self.projectiles.retain(|p| p.owner_id != player_id);
@@ -243,6 +331,7 @@ impl World {
 
     pub fn step(&mut self, dt: f32) -> Vec<GameOverEvent> {
         self.tick = self.tick.wrapping_add(1);
+        self.elapsed_sec += dt;
         for player in self.players.values_mut() {
             player.survival_sec += dt;
             if player.spawn_protection_left > 0.0 {
@@ -259,10 +348,13 @@ impl World {
         self.step_ring_scoring(dt);
         self.step_ooc_regen(dt);
         self.step_income_and_spawning(dt);
+        self.rebuild_spatial_grids();
         self.step_turrets(dt);
         self.step_projectiles(dt);
         self.step_units(dt);
-        if self.tick % 10 == 0 {
+        self.cluster_accum += dt;
+        if self.cluster_accum >= 0.5 {
+            self.cluster_accum %= 0.5;
             self.step_squad_clustering();
         }
         let game_overs = self.step_cleanup();
@@ -273,6 +365,7 @@ impl World {
     pub fn step_profiled(&mut self, dt: f32, timings: &mut StepTimings) -> Vec<GameOverEvent> {
         let t_start = Instant::now();
         self.tick = self.tick.wrapping_add(1);
+        self.elapsed_sec += dt;
         for player in self.players.values_mut() {
             player.survival_sec += dt;
             if player.spawn_protection_left > 0.0 {
@@ -293,13 +386,17 @@ impl World {
         self.step_ooc_regen(dt);
         self.step_income_and_spawning(dt);
         let t3 = Instant::now();
+        self.rebuild_spatial_grids();
+        let t3b = Instant::now();
         self.step_turrets(dt);
         let t4 = Instant::now();
         self.step_projectiles(dt);
         let t5 = Instant::now();
         self.step_units(dt);
         let t6 = Instant::now();
-        if self.tick % 10 == 0 {
+        self.cluster_accum += dt;
+        if self.cluster_accum >= 0.5 {
+            self.cluster_accum %= 0.5;
             self.step_squad_clustering();
         }
         let t7 = Instant::now();
@@ -308,19 +405,34 @@ impl World {
         self.record_telemetry_tick();
         let t9 = Instant::now();
 
+        let b_ns = (t1 - t0).as_nanos() as u64;
+        let p_ns = (t2 - t1).as_nanos() as u64;
+        let e_ns = (t3 - t2).as_nanos() as u64;
+        let g_ns = (t3b - t3).as_nanos() as u64;
+        let tu_ns = (t4 - t3b).as_nanos() as u64;
+        let pr_ns = (t5 - t4).as_nanos() as u64;
+        let u_ns = (t6 - t5).as_nanos() as u64;
+        let cl_ns = (t7 - t6).as_nanos() as u64;
+        let cu_ns = (t8 - t7).as_nanos() as u64;
+        let tl_ns = (t9 - t8).as_nanos() as u64;
+
         timings.ticks += 1;
-        timings.bots_ns += (t1 - t0).as_nanos() as u64;
-        timings.push_repulsion_ns += (t2 - t1).as_nanos() as u64;
-        timings.eco_spawn_ns += (t3 - t2).as_nanos() as u64;
-        timings.turrets_ns += (t4 - t3).as_nanos() as u64;
-        timings.projectiles_ns += (t5 - t4).as_nanos() as u64;
-        timings.units_ns += (t6 - t5).as_nanos() as u64;
-        timings.clustering_ns += (t7 - t6).as_nanos() as u64;
-        timings.cleanup_ns += (t8 - t7).as_nanos() as u64;
-        timings.telemetry_ns += (t9 - t8).as_nanos() as u64;
+        timings.bots_ns += b_ns;
+        timings.push_repulsion_ns += p_ns;
+        timings.eco_spawn_ns += e_ns;
+        timings.grid_ns += g_ns;
+        timings.turrets_ns += tu_ns;
+        timings.projectiles_ns += pr_ns;
+        timings.units_ns += u_ns;
+        timings.clustering_ns += cl_ns;
+        timings.cleanup_ns += cu_ns;
+        timings.telemetry_ns += tl_ns;
         let total = (t9 - t_start).as_nanos() as u64;
         if total > timings.max_tick_ns {
             timings.max_tick_ns = total;
+            timings.max_tick_num = self.tick;
+            timings.max_tick_phases_ns =
+                [b_ns, p_ns, e_ns, g_ns, tu_ns, pr_ns, u_ns, cl_ns, cu_ns];
         }
         game_overs
     }
@@ -329,12 +441,11 @@ impl World {
         if self.telemetry.is_none() {
             return;
         }
-        let tick_rate = f32::from(self.config.world.tick_rate.max(1));
-        let sec = self.tick as f32 / tick_rate;
+        let sec = self.elapsed_sec;
 
         let mut ring_updates: Vec<(PlayerId, u8, f32)> = Vec::new();
         for (&pid, z) in &self.zones {
-            let r = z.x.hypot(z.y);
+            let r = (z.x * z.x + z.y * z.y).sqrt();
             let ring = Self::ring_for_radius(r);
             ring_updates.push((pid, ring, self.equilibrium_radius(pid)));
         }
@@ -357,7 +468,8 @@ impl World {
             }
         }
 
-        if self.tick % tlog.snapshot_interval_ticks == 0 {
+        if sec - self.last_tlog_snap_sec >= 5.0 {
+            self.last_tlog_snap_sec = sec;
             tlog.flush_combat_window(self.tick, sec);
 
             let mut b_counts: HashMap<PlayerId, ([u16; 5], u8, f32)> = HashMap::new();
