@@ -118,7 +118,6 @@ export function getSquadSummariesOf(
 
 export function getDroneFocusTargetOf(state: ClientGameState, alpha: number): Point2D | null {
   if (state.playerId === null) return null;
-  const now = performance.now();
 
   let targetSquad = state.activeSquad;
   if (targetSquad === 0) {
@@ -140,10 +139,25 @@ export function getDroneFocusTargetOf(state: ClientGameState, alpha: number): Po
     pts.push({ x, y });
   }
 
+  // If frozen at leader's death spot, hold until a drone of this squad catches up
+  if (state.droneFreezeHold && state.droneFreezeHold.squad === targetSquad) {
+    let caughtUp = false;
+    for (const p of pts) {
+      if (Math.hypot(p.x - state.droneFreezeHold.x, p.y - state.droneFreezeHold.y) <= 180) {
+        caughtUp = true;
+        break;
+      }
+    }
+    if (!caughtUp) {
+      return { x: state.droneFreezeHold.x, y: state.droneFreezeHold.y };
+    }
+    state.droneFreezeHold = null;
+  }
+
   if (pts.length > 0) {
     const orderPt = state.squadOrders.get(targetSquad);
     if (targetSquad > 0 && state.reinforceSquad === targetSquad) {
-      const holdRef = orderPt ?? state.lastSquadCentroid;
+      const holdRef = state.lastSquadCentroid ?? orderPt;
       if (holdRef) {
         let minD = Infinity;
         for (const p of pts) {
@@ -181,14 +195,10 @@ export function getDroneFocusTargetOf(state: ClientGameState, alpha: number): Po
   }
 
   if (targetSquad > 0 && state.reinforceSquad === targetSquad) {
-    const holdRef = state.squadOrders.get(targetSquad) ?? state.lastSquadCentroid;
+    const holdRef = state.lastSquadCentroid ?? state.squadOrders.get(targetSquad);
     if (holdRef) return holdRef;
   }
 
-  if (state.lostSquadHold && now < state.lostSquadHold.untilMs) {
-    return { x: state.lostSquadHold.x, y: state.lostSquadHold.y };
-  }
-  state.lostSquadHold = null;
   return null;
 }
 

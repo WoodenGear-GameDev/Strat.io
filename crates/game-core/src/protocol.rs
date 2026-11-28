@@ -84,6 +84,31 @@ pub struct SnapshotProjectile {
     pub y: f32,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SnapshotTeleport {
+    pub owner_id: PlayerId,
+    pub target_x: f32,
+    pub target_y: f32,
+    pub progress_u8: u8,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SnapshotAttractor {
+    pub id: u32,
+    pub x: f32,
+    pub y: f32,
+    pub hp: u16,
+    pub max_hp: u16,
+    pub radius: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SnapshotHeat {
+    pub x: f32,
+    pub y: f32,
+    pub intensity_u8: u8,
+}
+
 #[derive(Debug, Clone)]
 pub struct PlayerMetaEntry {
     pub player_id: PlayerId,
@@ -118,6 +143,9 @@ pub enum ServerMessage {
         buildings: Vec<SnapshotBuilding>,
         units: Vec<SnapshotUnit>,
         projectiles: Vec<SnapshotProjectile>,
+        teleports: Vec<SnapshotTeleport>,
+        attractors: Vec<SnapshotAttractor>,
+        heats: Vec<SnapshotHeat>,
     },
     PlayerMeta {
         players: Vec<PlayerMetaEntry>,
@@ -255,6 +283,9 @@ pub const SNAPSHOT_ZONE_BYTES: usize = 20;
 pub const SNAPSHOT_BUILDING_BYTES: usize = 24;
 pub const SNAPSHOT_UNIT_BYTES: usize = 22;
 pub const SNAPSHOT_PROJECTILE_BYTES: usize = 17;
+pub const SNAPSHOT_TELEPORT_BYTES: usize = 13;
+pub const SNAPSHOT_ATTRACTOR_BYTES: usize = 20;
+pub const SNAPSHOT_HEAT_BYTES: usize = 9;
 
 #[allow(clippy::too_many_arguments)]
 pub fn write_snapshot_header(
@@ -288,6 +319,9 @@ impl ServerMessage {
                 buildings,
                 units,
                 projectiles,
+                teleports,
+                attractors,
+                heats,
                 ..
             } => {
                 SNAPSHOT_HEADER_BYTES
@@ -299,6 +333,12 @@ impl ServerMessage {
                     + units.len() * SNAPSHOT_UNIT_BYTES
                     + 2
                     + projectiles.len() * SNAPSHOT_PROJECTILE_BYTES
+                    + 2
+                    + teleports.len() * SNAPSHOT_TELEPORT_BYTES
+                    + 2
+                    + attractors.len() * SNAPSHOT_ATTRACTOR_BYTES
+                    + 2
+                    + heats.len() * SNAPSHOT_HEAT_BYTES
             }
             Self::PlayerMeta { players } => {
                 3 + players
@@ -336,6 +376,9 @@ impl ServerMessage {
                 buildings,
                 units,
                 projectiles,
+                teleports,
+                attractors,
+                heats,
             } => {
                 write_snapshot_header(
                     &mut out,
@@ -393,6 +436,31 @@ impl ServerMessage {
                     out.push(p.kind);
                     out.extend_from_slice(&p.x.to_le_bytes());
                     out.extend_from_slice(&p.y.to_le_bytes());
+                }
+
+                out.extend_from_slice(&(teleports.len() as u16).to_le_bytes());
+                for t in teleports {
+                    out.extend_from_slice(&t.owner_id.to_le_bytes());
+                    out.extend_from_slice(&t.target_x.to_le_bytes());
+                    out.extend_from_slice(&t.target_y.to_le_bytes());
+                    out.push(t.progress_u8);
+                }
+
+                out.extend_from_slice(&(attractors.len() as u16).to_le_bytes());
+                for a in attractors {
+                    out.extend_from_slice(&a.id.to_le_bytes());
+                    out.extend_from_slice(&a.x.to_le_bytes());
+                    out.extend_from_slice(&a.y.to_le_bytes());
+                    out.extend_from_slice(&a.hp.to_le_bytes());
+                    out.extend_from_slice(&a.max_hp.to_le_bytes());
+                    out.extend_from_slice(&a.radius.to_le_bytes());
+                }
+
+                out.extend_from_slice(&(heats.len() as u16).to_le_bytes());
+                for h in heats {
+                    out.extend_from_slice(&h.x.to_le_bytes());
+                    out.extend_from_slice(&h.y.to_le_bytes());
+                    out.push(h.intensity_u8);
                 }
             }
             Self::PlayerMeta { players } => {

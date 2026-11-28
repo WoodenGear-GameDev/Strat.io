@@ -1,5 +1,6 @@
 import { CameraController } from "./render/camera.ts";
 import {
+  drawAttractorsOverFog,
   drawBuildings,
   drawEffects,
   drawHpBars,
@@ -164,6 +165,16 @@ export class CanvasRenderer {
         this.camera.zoom,
         state,
         visionCircles,
+      );
+      drawAttractorsOverFog(
+        ctx,
+        state,
+        this.camera.camX,
+        this.camera.camY,
+        this.camera.zoom,
+        this.width,
+        this.height,
+        now,
       );
       drawMinimap(
         ctx,

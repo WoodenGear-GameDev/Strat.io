@@ -15,6 +15,9 @@ impl World {
         let map_r = self.config.world.map_radius;
         let players = &self.players;
         for (&pid, z) in &mut self.zones {
+            if players.get(&pid).is_some_and(|p| p.is_hive) {
+                continue;
+            }
             let hq_lvl = players.get(&pid).map(|p| p.hq_level).unwrap_or(1);
             let max_r = match hq_lvl {
                 0 | 1 => (map_r - z.radius).max(0.0),
@@ -269,31 +272,38 @@ impl World {
                             vy = dir_y * speed * slow;
                         }
                     } else if let Some(z) = zones.get(&u.owner_id) {
-                        let orbit_r = z.radius + 14.0 + ((u.id % 3) as f32) * 10.0;
-                        let rx = u.x - z.x;
-                        let ry = u.y - z.y;
-                        let dist = (rx * rx + ry * ry).sqrt();
-                        let (nx, ny) = if dist > 0.001 {
-                            (rx / dist, ry / dist)
-                        } else {
-                            let a = (u.id as f32) * 1.1;
-                            (a.cos(), a.sin())
-                        };
-                        let tx = -ny;
-                        let ty = nx;
-                        let radial_err = ((orbit_r - dist) / 48.0).clamp(-1.0, 1.0);
-                        let tang_weight = if (dist - orbit_r).abs() > 75.0 {
-                            0.25
-                        } else {
-                            1.0
-                        };
-                        let dir_x = nx * radial_err + tx * tang_weight;
-                        let dir_y = ny * radial_err + ty * tang_weight;
-                        let dlen = (dir_x * dir_x + dir_y * dir_y).sqrt();
-                        let patrol_speed = speed * 0.78;
-                        if dlen > 0.001 {
-                            vx = (dir_x / dlen) * patrol_speed;
-                            vy = (dir_y / dlen) * patrol_speed;
+                        let charging_tp = u.squad == 0
+                            && ctx
+                                .players
+                                .get(&u.owner_id)
+                                .is_some_and(|p| p.pending_teleport.is_some());
+                        if !charging_tp {
+                            let orbit_r = z.radius + 14.0 + ((u.id % 3) as f32) * 10.0;
+                            let rx = u.x - z.x;
+                            let ry = u.y - z.y;
+                            let dist = (rx * rx + ry * ry).sqrt();
+                            let (nx, ny) = if dist > 0.001 {
+                                (rx / dist, ry / dist)
+                            } else {
+                                let a = (u.id as f32) * 1.1;
+                                (a.cos(), a.sin())
+                            };
+                            let tx = -ny;
+                            let ty = nx;
+                            let radial_err = ((orbit_r - dist) / 48.0).clamp(-1.0, 1.0);
+                            let tang_weight = if (dist - orbit_r).abs() > 75.0 {
+                                0.25
+                            } else {
+                                1.0
+                            };
+                            let dir_x = nx * radial_err + tx * tang_weight;
+                            let dir_y = ny * radial_err + ty * tang_weight;
+                            let dlen = (dir_x * dir_x + dir_y * dir_y).sqrt();
+                            let patrol_speed = speed * 0.78;
+                            if dlen > 0.001 {
+                                vx = (dir_x / dlen) * patrol_speed;
+                                vy = (dir_y / dlen) * patrol_speed;
+                            }
                         }
                     }
                 }

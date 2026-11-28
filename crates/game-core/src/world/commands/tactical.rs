@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::types::{ArmyMode, PlayerId, SquadOrder};
+use crate::types::{ArmyMode, PendingTeleport, PlayerId, SquadOrder};
 
 use super::super::hex::beacon_ext_radius;
 use super::super::World;
@@ -68,6 +68,9 @@ impl World {
                             player.army_mode = ArmyMode::Defend;
                         }
                     } else if player.squads.remove(&squad).is_some() {
+                        if player.reinforce_squad == Some(squad) {
+                            player.reinforce_squad = None;
+                        }
                         changed = true;
                     }
                 }
@@ -180,22 +183,17 @@ impl World {
         if !target_x.is_finite() || !target_y.is_finite() {
             return Some(12);
         }
-        let cd_left = self
+        let already_charging = self
             .players
             .get(&player_id)
-            .map(|p| p.teleport_cooldown_left)
-            .unwrap_or(0.0);
-        if cd_left > 0.0 {
+            .map(|p| p.pending_teleport.is_some())
+            .unwrap_or(false);
+        if already_charging {
             return Some(11);
         }
         let Some(zone) = self.zones.get(&player_id).cloned() else {
             return Some(1);
         };
-        let is_bot_caller = self
-            .players
-            .get(&player_id)
-            .map(|p| p.is_bot)
-            .unwrap_or(false);
         let target_r = target_x.hypot(target_y);
         let hq_lvl = self.hq_level_of(player_id);
         let r_eq = self.equilibrium_radius(player_id);
@@ -203,7 +201,7 @@ impl World {
         if target_r > max_r {
             return Some(12);
         }
-        if !is_bot_caller && !self.has_vision_at(player_id, target_x, target_y) {
+        if !self.has_vision_at(player_id, target_x, target_y) {
             return Some(18);
         }
 
@@ -238,7 +236,7 @@ impl World {
             + dist * self.config.world.teleport_dist_factor
             + (target_r - r_eq).abs() * ring_pen)
             .round();
-        let cd_sec = self.config.world.teleport_cooldown_sec;
+        let charge_sec = self.config.world.teleport_charge_sec.max(0.05);
 
         let Some(player) = self.players.get_mut(&player_id) else {
             return Some(1);
@@ -246,16 +244,16 @@ impl World {
         if player.energy < cost {
             return Some(2);
         }
-        let from_r = zone.x.hypot(zone.y);
         player.energy -= cost;
-        player.teleport_cooldown_left = cd_sec;
         player.spawn_protection_left = 0.0;
         player.last_teleport_sec = player.survival_sec;
+        player.pending_teleport = Some(PendingTeleport {
+            target_x,
+            target_y,
+            remaining_sec: charge_sec,
+            total_sec: charge_sec,
+        });
         let is_bot = player.is_bot;
-        if let Some(z) = self.zones.get_mut(&player_id) {
-            z.x = target_x;
-            z.y = target_y;
-        }
         let ring = self.ring_for_radius(target_r);
         if let Some(tlog) = self.telemetry.as_mut() {
             let sec = self.tick as f32 / f32::from(self.config.world.tick_rate.max(1));
@@ -268,14 +266,90 @@ impl World {
                 ring,
                 json!({"cost": cost}),
             );
-            tlog.log_milestone(
-                self.tick,
-                sec,
-                player_id,
-                "teleport",
-                json!({"from_r": from_r.round(), "to_r": target_r.round(), "cost": cost}),
-            );
         }
         None
+    }
+
+    pub(in super::super) fn step_teleport(&mut self, dt: f32) {
+        let pull_speed = self.config.world.teleport_patrol_pull_speed;
+        let map_r = self.config.world.map_radius;
+        let mut charging: Vec<(PlayerId, f32, f32)> = Vec::new();
+        let mut completed: Vec<(PlayerId, f32, f32)> = Vec::new();
+
+        for (&pid, player) in &mut self.players {
+            let Some(tp) = player.pending_teleport.as_mut() else {
+                continue;
+            };
+            tp.remaining_sec -= dt;
+            if tp.remaining_sec <= 0.0 {
+                let (tx, ty) = (tp.target_x, tp.target_y);
+                player.pending_teleport = None;
+                player.base_rally = None;
+                completed.push((pid, tx, ty));
+            } else if let Some(z) = self.zones.get(&pid) {
+                charging.push((pid, z.x, z.y));
+            }
+        }
+
+        if !charging.is_empty() {
+            let max_step = pull_speed * dt;
+            for u in &mut self.units {
+                if u.hp == 0 || u.squad != 0 {
+                    continue;
+                }
+                if let Some(&(_, zx, zy)) = charging.iter().find(|&&(pid, _, _)| pid == u.owner_id) {
+                    let dx = zx - u.x;
+                    let dy = zy - u.y;
+                    let dist = dx.hypot(dy);
+                    if dist > 1.0 {
+                        let step = dist.min(max_step);
+                        u.x += (dx / dist) * step;
+                        u.y += (dy / dist) * step;
+                    }
+                }
+            }
+        }
+
+        for (pid, tx, ty) in completed {
+            let Some((dx, dy, from_r)) = self.zones.get_mut(&pid).map(|z| {
+                let from_r = z.x.hypot(z.y);
+                let dx = tx - z.x;
+                let dy = ty - z.y;
+                z.x = tx;
+                z.y = ty;
+                (dx, dy, from_r)
+            }) else {
+                continue;
+            };
+
+            let clamp_r = (map_r - 16.0).max(0.0);
+            let clamp_r2 = clamp_r * clamp_r;
+            for u in &mut self.units {
+                if u.owner_id == pid && u.hp > 0 && u.squad == 0 {
+                    u.x += dx;
+                    u.y += dy;
+                    let d2 = u.x * u.x + u.y * u.y;
+                    if d2 > clamp_r2 {
+                        let d = d2.sqrt();
+                        if d > 0.001 {
+                            u.x = u.x / d * clamp_r;
+                            u.y = u.y / d * clamp_r;
+                        }
+                    }
+                }
+            }
+
+            if let Some(tlog) = self.telemetry.as_mut() {
+                let sec = self.tick as f32 / f32::from(self.config.world.tick_rate.max(1));
+                let target_r = tx.hypot(ty);
+                tlog.log_milestone(
+                    self.tick,
+                    sec,
+                    pid,
+                    "teleport",
+                    json!({"from_r": from_r.round(), "to_r": target_r.round()}),
+                );
+            }
+        }
     }
 }

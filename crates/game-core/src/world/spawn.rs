@@ -106,13 +106,14 @@ impl World {
             buildings_destroyed: 0,
             survival_sec: 0.0,
             is_bot: bot_tier > 0,
+            is_hive: false,
             bot_tier,
             bot_think_cooldown: if bot_tier > 0 {
                 self.rng.gen_range(0.05..1.05)
             } else {
                 1.0
             },
-            teleport_cooldown_left: 0.0,
+            pending_teleport: None,
             spawn_counter: 0,
             last_damaged_sec: -100.0,
             bot_archetype,

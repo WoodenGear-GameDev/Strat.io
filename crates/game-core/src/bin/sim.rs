@@ -142,8 +142,9 @@ fn main() {
             let go = world.step_profiled(dt, &mut timings);
             if let Some(first) = agents.first() {
                 let ts = Instant::now();
-                if let Some(snap) = world.build_snapshot(first.id) {
-                    last_snap_bytes = snap.encode().len();
+                let meta = world.compute_snapshot_shared_meta();
+                if let Some(bytes) = world.encode_snapshot_for_player(first.id, &meta) {
+                    last_snap_bytes = bytes.len();
                 }
                 timings.snapshot_ns += ts.elapsed().as_nanos() as u64;
             }

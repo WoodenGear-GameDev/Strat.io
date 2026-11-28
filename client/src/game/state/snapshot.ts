@@ -58,10 +58,14 @@ export function applySnapshotToState(
     }
   }
 
+  let activeSquadUnitDied = false;
   for (const [id, oldU] of state.units) {
     if (!nextUnits.has(id)) {
       if (oldU.ownerId === state.playerId) {
         state.lastDamagedAtMs = now;
+        if (state.activeSquad > 0 && oldU.squad === state.activeSquad) {
+          activeSquadUnitDied = true;
+        }
       }
       recordCombatHeat(state, oldU.x, oldU.y, 1.0, now);
       state.effects.push({
@@ -145,6 +149,9 @@ export function applySnapshotToState(
   state.unitCount = msg.unitCount;
   state.unitCap = msg.unitCap;
   state.teleportCdSec = msg.teleportCdSec;
+  state.teleports = msg.teleports;
+  state.attractors = msg.attractors;
+  state.serverHeats = msg.heats;
 
   // Swap double-buffered maps
   state.prevZones = state.zones;
@@ -156,7 +163,7 @@ export function applySnapshotToState(
   state.prevUnits = state.units;
   state.units = nextUnits;
 
-  // Track squad continuity, auto-merges, and short hold on squad wipe
+  // Track squad continuity, auto-merges, and death-spot freeze hold
   if (state.playerId !== null) {
     const liveSquads = new Map<number, { sx: number; sy: number; cnt: number }>();
     for (const u of nextUnits.values()) {
@@ -168,7 +175,9 @@ export function applySnapshotToState(
       liveSquads.set(u.squad, cur);
     }
     for (const sid of Array.from(state.squadOrders.keys())) {
-      if (!liveSquads.has(sid) && sid !== state.reinforceSquad) {
+      const keepFrozen =
+        sid === state.activeSquad && state.cameraAnchor === "drones" && state.lastSquadCentroid !== null;
+      if (!liveSquads.has(sid) && sid !== state.reinforceSquad && !keepFrozen) {
         state.squadOrders.delete(sid);
       }
     }
@@ -185,15 +194,47 @@ export function applySnapshotToState(
         state.squadOrders.set(newSid, state.pendingNewSquadTarget);
         state.pendingNewSquadTarget = null;
         state.pendingNewSquadPrevIds = null;
-        state.lostSquadHold = null;
+        state.droneFreezeHold = null;
       }
     }
     if (state.activeSquad > 0) {
       const cur = liveSquads.get(state.activeSquad);
+      const hasOrder = state.squadOrders.has(state.activeSquad);
       if (cur && cur.cnt > 0) {
-        state.lostSquadHold = null;
-      } else if (state.activeSquad === state.reinforceSquad) {
-        state.lostSquadHold = null;
+        if (hasOrder && state.cameraAnchor === "drones") {
+          if (state.droneFreezeHold && state.droneFreezeHold.squad === state.activeSquad) {
+            let caughtUp = false;
+            for (const u of nextUnits.values()) {
+              if (u.ownerId !== state.playerId || u.squad !== state.activeSquad) continue;
+              if (
+                Math.hypot(u.x - state.droneFreezeHold.x, u.y - state.droneFreezeHold.y) <= 180
+              ) {
+                caughtUp = true;
+                break;
+              }
+            }
+            if (caughtUp) state.droneFreezeHold = null;
+          } else if (activeSquadUnitDied && state.lastSquadCentroid) {
+            let minDist = Infinity;
+            for (const u of nextUnits.values()) {
+              if (u.ownerId !== state.playerId || u.squad !== state.activeSquad) continue;
+              const d = Math.hypot(
+                u.x - state.lastSquadCentroid.x,
+                u.y - state.lastSquadCentroid.y,
+              );
+              if (d < minDist) minDist = d;
+            }
+            if (minDist > 160) {
+              state.droneFreezeHold = {
+                squad: state.activeSquad,
+                x: state.lastSquadCentroid.x,
+                y: state.lastSquadCentroid.y,
+              };
+            }
+          }
+        } else {
+          state.droneFreezeHold = null;
+        }
       } else if (state.lastSquadCentroid) {
         let mergedId: number | null = null;
         let bestDist = 230;
@@ -210,6 +251,7 @@ export function applySnapshotToState(
         }
         if (mergedId !== null) {
           state.activeSquad = mergedId;
+          state.droneFreezeHold = null;
         } else {
           const ownZone = state.zones.get(state.playerId);
           const returnedToBase =
@@ -219,17 +261,22 @@ export function applySnapshotToState(
               state.lastSquadCentroid.y - ownZone.y,
             ) <=
               ownZone.radius + 390;
-          if (!returnedToBase && state.cameraAnchor === "drones") {
-            state.lostSquadHold = {
-              x: state.lastSquadCentroid.x,
-              y: state.lastSquadCentroid.y,
-              untilMs: now + 1400,
-            };
+          if (!returnedToBase && state.cameraAnchor === "drones" && (hasOrder || state.activeSquad === state.reinforceSquad)) {
+            if (!state.droneFreezeHold || state.droneFreezeHold.squad !== state.activeSquad) {
+              state.droneFreezeHold = {
+                squad: state.activeSquad,
+                x: state.lastSquadCentroid.x,
+                y: state.lastSquadCentroid.y,
+              };
+            }
+          } else {
+            state.droneFreezeHold = null;
+            state.activeSquad = 0;
+            state.lastSquadCentroid = null;
           }
-          state.activeSquad = 0;
-          state.lastSquadCentroid = null;
         }
-      } else {
+      } else if (state.activeSquad !== state.reinforceSquad) {
+        state.droneFreezeHold = null;
         state.activeSquad = 0;
       }
     }

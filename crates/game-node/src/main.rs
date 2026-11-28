@@ -315,14 +315,11 @@ async fn run_room(
 
                 let snap_start = Instant::now();
                 if !sessions.is_empty() {
-                    let (shared_tail, unit_counts) = world.build_shared_snapshot_tail_with_counts();
+                    let meta = world.compute_snapshot_shared_meta();
                     for session in sessions.values() {
-                        let unit_count = unit_counts.get(&session.player_id).copied().unwrap_or(0);
-                        if let Some(encoded) = world.encode_snapshot_with_tail_and_count(
-                            session.player_id,
-                            unit_count,
-                            &shared_tail,
-                        ) {
+                        if let Some(encoded) =
+                            world.encode_snapshot_for_player(session.player_id, &meta)
+                        {
                             let _ = session.tx.send(encoded);
                         }
                     }

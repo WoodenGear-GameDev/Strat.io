@@ -196,6 +196,26 @@ impl World {
             }
         }
 
+        // Global Points of Interest (Attractors) are visible through fog of war to everyone
+        for b in &self.buildings {
+            if b.owner_id != 0 || b.kind != 6 || b.hp == 0 {
+                continue;
+            }
+            if active_combat_power < 3.0 {
+                continue;
+            }
+            let dx = b.rel_x - own_z.x;
+            let dy = b.rel_y - own_z.y;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let hp_ratio = f32::from(b.hp) / f32::from(b.max_hp.max(1));
+            let finish_mult = if hp_ratio < 0.55 { 2.4 } else { 1.35 };
+            let utility = (3.2 * finish_mult) / (dist + profile.dist_bias);
+            if utility > best_utility {
+                best_utility = utility;
+                best_target = Some((b.rel_x, b.rel_y));
+            }
+        }
+
         (garrison_ready, best_target)
     }
 

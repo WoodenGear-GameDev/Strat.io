@@ -3,8 +3,11 @@ import type { HexCoord, Point2D, Rhombus } from "../hex.ts";
 import type {
   LeaderboardEntry,
   ServerMessage,
+  SnapshotAttractor,
   SnapshotBuilding,
+  SnapshotHeat,
   SnapshotProjectile,
+  SnapshotTeleport,
   SnapshotUnit,
   SnapshotZone,
 } from "../protocol.ts";
@@ -61,7 +64,7 @@ export class ClientGameState {
   reinforceSquad = 0;
   squadOrders = new Map<number, Point2D>();
   lastSquadCentroid: Point2D | null = null;
-  lostSquadHold: { x: number; y: number; untilMs: number } | null = null;
+  droneFreezeHold: { squad: number; x: number; y: number } | null = null;
   pendingNewSquadTarget: Point2D | null = null;
   pendingNewSquadPrevIds: Set<number> | null = null;
 
@@ -95,6 +98,9 @@ export class ClientGameState {
 
   prevProjectiles = new Map<number, SnapshotProjectile>();
   projectiles = new Map<number, SnapshotProjectile>();
+  teleports: SnapshotTeleport[] = [];
+  attractors: SnapshotAttractor[] = [];
+  serverHeats: SnapshotHeat[] = [];
 
   effects: VisualEffect[] = [];
   buildingHitEffects = new Map<number, { startMs: number; untilMs: number }>();
@@ -225,7 +231,7 @@ export class ClientGameState {
     this.activeSquad = 0;
     this.squadOrders.clear();
     this.lastSquadCentroid = null;
-    this.lostSquadHold = null;
+    this.droneFreezeHold = null;
     this.buildKind = null;
     this.actionMode = null;
     this.rallySelectMode = false;
@@ -245,6 +251,9 @@ export class ClientGameState {
     this.units.clear();
     this.prevProjectiles.clear();
     this.projectiles.clear();
+    this.teleports = [];
+    this.attractors = [];
+    this.serverHeats = [];
     this.effects = [];
     this.buildingHitEffects.clear();
     this.teleportFlashes = [];

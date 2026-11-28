@@ -225,7 +225,7 @@ export function handlePrimaryAction(
     ctrl.transport.send(encodeTeleportZone(w.x, w.y));
     ctrl.state.teleportSelectMode = false;
     ctrl.state.activeSquad = 0;
-    ctrl.state.lostSquadHold = null;
+    ctrl.state.droneFreezeHold = null;
     ctrl.state.cameraAnchor = "hq";
     ctrl.callbacks.onUiChange();
     return false;

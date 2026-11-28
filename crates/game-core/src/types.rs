@@ -10,6 +10,14 @@ pub struct SquadOrder {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct PendingTeleport {
+    pub target_x: f32,
+    pub target_y: f32,
+    pub remaining_sec: f32,
+    pub total_sec: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct BotKnownTarget {
     pub x: f32,
     pub y: f32,
@@ -60,9 +68,10 @@ pub struct PlayerState {
     pub buildings_destroyed: u32,
     pub survival_sec: f32,
     pub is_bot: bool,
+    pub is_hive: bool,
     pub bot_tier: u8,
     pub bot_think_cooldown: f32,
-    pub teleport_cooldown_left: f32,
+    pub pending_teleport: Option<PendingTeleport>,
     pub spawn_counter: u32,
     pub last_damaged_sec: f32,
     pub bot_archetype: u8,
@@ -154,6 +163,15 @@ pub struct Projectile {
     pub damage: u16,
     pub ttl: f32,
     pub splash_radius: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CombatHeatSpot {
+    pub x: f32,
+    pub y: f32,
+    pub power: f32,
+    pub show_at_sec: f32,
+    pub until_sec: f32,
 }
 
 #[derive(Debug, Clone)]

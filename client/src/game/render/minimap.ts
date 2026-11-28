@@ -71,19 +71,39 @@ export function drawMinimap(
   ctx.arc(cx, cy, ring2R, 0, Math.PI * 2);
   ctx.stroke();
 
-  // Heat zones of major combat (delayed slightly)
-  for (const h of state.combatHeats) {
-    if (now < h.showAtMs || h.power < 2.5) continue;
+  // Server-authoritative heat zones of major combat ("red fog")
+  for (const h of state.serverHeats) {
     const hx = cx + h.x * scale;
     const hy = cy + h.y * scale;
-    const fade = Math.min(1, (h.untilMs - now) / 2500);
-    const hr = Math.min(11, 4 + h.power * 0.7);
+    const norm = Math.max(0.15, h.intensityU8 / 255);
+    const hr = 4 + norm * 8;
     const grad = ctx.createRadialGradient(hx, hy, 1, hx, hy, hr);
-    grad.addColorStop(0, `rgba(255, 118, 87, ${(0.72 * fade).toFixed(2)})`);
+    grad.addColorStop(0, `rgba(255, 118, 87, ${(0.76 * norm).toFixed(2)})`);
     grad.addColorStop(1, "rgba(255, 118, 87, 0)");
     ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.arc(hx, hy, hr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Global Points of Interest (Attractors) visible through fog of war
+  const attrPulse = (now % 1800) / 1800;
+  for (const a of state.attractors) {
+    const ax = cx + a.x * scale;
+    const ay = cy + a.y * scale;
+    ctx.strokeStyle = `rgba(255, 209, 102, ${((1 - attrPulse) * 0.9).toFixed(2)})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(ax, ay, 3 + attrPulse * 8, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = "#ffd166";
+    ctx.beginPath();
+    ctx.moveTo(ax, ay - 4);
+    ctx.lineTo(ax + 4, ay);
+    ctx.lineTo(ax, ay + 4);
+    ctx.lineTo(ax - 4, ay);
+    ctx.closePath();
     ctx.fill();
   }
 
@@ -128,7 +148,14 @@ export function drawMinimap(
       ctx.stroke();
     }
 
-    ctx.fillStyle = isOwn ? "#a8c7fa" : rank === 1 ? "#ffd166" : "#f28b82";
+    const isHive = snapZ !== undefined && (snapZ.flags & 16) !== 0;
+    ctx.fillStyle = isOwn
+      ? "#a8c7fa"
+      : rank === 1
+        ? "#ffd166"
+        : isHive
+          ? "#4ade80"
+          : "#f28b82";
     ctx.beginPath();
     ctx.arc(zx, zy, dotR, 0, Math.PI * 2);
     ctx.fill();

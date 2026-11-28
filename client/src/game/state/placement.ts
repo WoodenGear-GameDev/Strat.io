@@ -34,7 +34,9 @@ export function getOpenLargeHexesForState(
   const coreR = coreHexRadius(hqLevel);
   insertHexDisk(0, 0, coreR, open);
 
-  if (hqLevel >= 3) {
+  const zone = state.zones.get(ownerId);
+  const isHive = zone !== undefined && (zone.flags & 16) !== 0;
+  if (hqLevel >= 3 || isHive) {
     const nodeHexR = getNodeHexRadius(state.balance);
     for (const b of state.buildings.values()) {
       if (b.ownerId === ownerId && b.kind === 5) {

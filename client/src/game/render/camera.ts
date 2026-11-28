@@ -144,12 +144,13 @@ export class CameraController {
     }
 
     // Clamp camera smoothly inside the union of all active vision circles,
-    // unless holding camera at a reinforced squad's target marker while waiting for reinforcements.
-    const holdingReinforceTarget =
+    // unless holding camera at a reinforced squad or frozen on a lead drone's death spot.
+    const holdingDroneFreeze =
       state.cameraAnchor === "drones" &&
       state.activeSquad > 0 &&
-      state.reinforceSquad === state.activeSquad;
-    if (!holdingReinforceTarget && visionCircles.length > 0) {
+      (state.reinforceSquad === state.activeSquad ||
+        state.droneFreezeHold?.squad === state.activeSquad);
+    if (!holdingDroneFreeze && visionCircles.length > 0) {
       let inside = false;
       let bestDist = Infinity;
       let projX = ownX;

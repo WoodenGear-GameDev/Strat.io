@@ -17,7 +17,7 @@ const ERROR_MESSAGES: Record<number, string> = {
   7: "Постройка не найдена",
   8: "Ядро нельзя продать",
   9: "Юнит ещё не открыт на этом уровне Дронов",
-  11: "Телепорт на перезарядке",
+  11: "Телепорт уже заряжается",
   12: "Нельзя телепортироваться за пределы своего кольца",
   13: "Нельзя телепортироваться на чужую зону",
   14: "Узел доступен с Ядра Ур. 3",
@@ -202,6 +202,7 @@ function loop(now: number): void {
     }
   }
 
+  input.step(dt);
   state.stepEffects(dt);
   renderer.render(state, now);
   requestAnimationFrame(loop);

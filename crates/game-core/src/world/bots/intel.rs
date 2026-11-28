@@ -69,6 +69,9 @@ impl World {
             .collect();
 
         for b in &self.buildings {
+            if b.owner_id == 0 {
+                continue;
+            }
             let entry = map.entry(b.owner_id).or_default();
             entry.total_buildings += 1;
             match b.kind {

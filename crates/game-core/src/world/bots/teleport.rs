@@ -19,7 +19,7 @@ impl World {
         let Some(p) = self.players.get(&pid) else {
             return false;
         };
-        if p.teleport_cooldown_left > 0.0 {
+        if p.pending_teleport.is_some() {
             return false;
         }
         let energy = p.energy;
@@ -100,7 +100,7 @@ impl World {
             return false;
         };
         let min_tp_e = if arch == 4 { 550.0 } else { 220.0 };
-        if p.teleport_cooldown_left > 0.0 || p.energy < min_tp_e {
+        if p.pending_teleport.is_some() || p.energy < min_tp_e {
             return false;
         }
         let max_ring_r = self.max_radius_for_hq(intel.hq_lvl, own_z.radius);

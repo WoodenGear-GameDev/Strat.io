@@ -22,6 +22,7 @@ export class InputController {
   touchPainting = false;
   lastPaintedSlotKey: string | null = null;
   lastActedBuildingId: number | null = null;
+  pressedMoveKeys = new Set<string>();
 
   constructor(
     public readonly canvas: HTMLCanvasElement,
@@ -33,6 +34,20 @@ export class InputController {
     bindKeyboardEvents(this);
     bindPointerEvents(this);
     bindTouchEvents(this);
+  }
+
+  step(dt: number): void {
+    if (this.state.playerId === null || this.pressedMoveKeys.size === 0) return;
+    const mx =
+      (this.pressedMoveKeys.has("KeyD") || this.pressedMoveKeys.has("ArrowRight") ? 1 : 0) -
+      (this.pressedMoveKeys.has("KeyA") || this.pressedMoveKeys.has("ArrowLeft") ? 1 : 0);
+    const my =
+      (this.pressedMoveKeys.has("KeyS") || this.pressedMoveKeys.has("ArrowDown") ? 1 : 0) -
+      (this.pressedMoveKeys.has("KeyW") || this.pressedMoveKeys.has("ArrowUp") ? 1 : 0);
+    if (mx === 0 && my === 0) return;
+    const len = Math.hypot(mx, my);
+    const speed = this.state.balance.world.camera_wasd_speed ?? 650;
+    this.renderer.panBy((-mx / len) * speed * dt, (-my / len) * speed * dt);
   }
 
   isPointInBaseBuildArea(wx: number, wy: number): boolean {
@@ -129,7 +144,7 @@ export class InputController {
 
   selectSquad(squadId: number): void {
     if (this.state.playerId === null) return;
-    this.state.lostSquadHold = null;
+    this.state.droneFreezeHold = null;
     this.state.buildKind = null;
     this.state.actionMode = null;
     this.state.teleportSelectMode = false;
@@ -179,6 +194,19 @@ export class InputController {
     this.selectSquad(order[nextIdx]);
   }
 
+  centerOnActiveFocus(): void {
+    if (this.state.playerId === null) return;
+    if (this.state.cameraAnchor === "drones" && this.state.activeSquad > 0) {
+      const focus = this.state.getDroneFocusTarget(1);
+      if (focus) {
+        this.renderer.flyTo(focus.x, focus.y);
+        return;
+      }
+    }
+    const ownZone = this.state.zones.get(this.state.playerId);
+    if (ownZone) this.renderer.flyTo(ownZone.x, ownZone.y);
+  }
+
   centerOnBase(): void {
     if (this.state.playerId === null) return;
     if (this.state.cameraAnchor === "hq") {
@@ -203,13 +231,34 @@ export class InputController {
       }
     } else {
       this.state.activeSquad = 0;
-      this.state.lostSquadHold = null;
+      this.state.droneFreezeHold = null;
       this.state.cameraAnchor = "hq";
       this.state.rallySelectMode = false;
       this.transport.send(encodeArmyCommand(0, 0, 0, 0));
       const ownZone = this.state.zones.get(this.state.playerId);
       if (ownZone) this.renderer.flyTo(ownZone.x, ownZone.y);
     }
+    this.callbacks.onUiChange();
+  }
+
+  recallSquadHome(squadId: number): void {
+    if (this.state.playerId === null || squadId <= 0) return;
+    const ownZone = this.state.zones.get(this.state.playerId);
+    const baseX = ownZone?.x ?? 0;
+    const baseY = ownZone?.y ?? 0;
+    this.transport.send(encodeArmyCommand(squadId, 0, baseX, baseY));
+    this.state.squadOrders.delete(squadId);
+    if (this.state.reinforceSquad === squadId) {
+      this.state.reinforceSquad = 0;
+    }
+    if (this.state.droneFreezeHold?.squad === squadId) {
+      this.state.droneFreezeHold = null;
+    }
+    this.state.activeSquad = 0;
+    this.state.cameraAnchor = "hq";
+    this.state.rallySelectMode = false;
+    if (ownZone) this.renderer.flyTo(ownZone.x, ownZone.y);
+    this.callbacks.onToast(`Отряд #${squadId} возвращается на базу`);
     this.callbacks.onUiChange();
   }
 

@@ -15,7 +15,8 @@ impl World {
         let hq_lvl = self.hq_level_of(player_id);
         insert_hex_disk(0, 0, core_hex_radius(hq_lvl), &mut open);
 
-        if hq_lvl >= 3 {
+        let is_hive = self.players.get(&player_id).is_some_and(|p| p.is_hive);
+        if hq_lvl >= 3 || is_hive {
             let node_r = self.node_hex_radius();
             for b in &self.buildings {
                 if b.owner_id == player_id && b.kind == 5 && b.hp > 0 {
@@ -181,7 +182,8 @@ impl World {
         loop {
             supported_hexes.clear();
             insert_hex_disk(0, 0, core_r, &mut supported_hexes);
-            if hq_lvl >= 3 {
+            let is_hive = self.players.get(&player_id).is_some_and(|p| p.is_hive);
+            if hq_lvl >= 3 || is_hive {
                 for (i, n) in nodes.iter().enumerate() {
                     if alive[i] && n.kind == 5 {
                         insert_hex_disk(n.hex.0, n.hex.1, node_r, &mut supported_hexes);

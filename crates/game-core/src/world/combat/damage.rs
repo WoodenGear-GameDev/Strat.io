@@ -37,7 +37,9 @@ impl World {
         };
 
         if any_dead_unit {
-            let mut unit_killers: Vec<(PlayerId, u8, u8, u8)> = Vec::new();
+            let mut unit_killers: Vec<(PlayerId, u8, u8, u8, bool)> = Vec::new();
+            let mut heat_events: Vec<(f32, f32, f32)> = Vec::new();
+            let players_ref = &self.players;
             self.units.retain(|u| {
                 if u.hp == 0 {
                     let dr = Self::ring_for_radius_with(
@@ -45,6 +47,7 @@ impl World {
                         ring3_r,
                         ring2_r,
                     );
+                    heat_events.push((u.x, u.y, 1.0));
                     if let Some(tl) = tlog.as_mut() {
                         let sr = u
                             .last_hit_by
@@ -53,7 +56,9 @@ impl World {
                         tl.log_kill(u.last_hit_src, u.kind, sr, dr);
                     }
                     if let Some(k) = u.last_hit_by {
-                        unit_killers.push((k, u.kind, u.last_hit_src, dr));
+                        let victim_is_hive =
+                            players_ref.get(&u.owner_id).is_some_and(|p| p.is_hive);
+                        unit_killers.push((k, u.kind, u.last_hit_src, dr, victim_is_hive));
                     }
                     false
                 } else {
@@ -61,13 +66,22 @@ impl World {
                 }
             });
 
-            for (k, ukind, killer_src, death_ring) in unit_killers {
+            for (hx, hy, hw) in heat_events {
+                self.record_combat_heat(hx, hy, hw);
+            }
+
+            for (k, ukind, killer_src, death_ring, victim_is_hive) in unit_killers {
                 let turret_kill = (20..=22).contains(&killer_src);
                 let unit_cost = self.unit_energy_cost(ukind);
                 let ring_bonus = if death_ring >= 3 { 1.2 } else { 1.0 };
 
                 let base_e = unit_cost * 0.35;
-                let base_t = unit_cost * if turret_kill { 0.12 } else { 0.32 };
+                // Hive drones drop 0 Essence (only Hive HQ drops Essence per spec)
+                let base_t = if victim_is_hive {
+                    0.0
+                } else {
+                    unit_cost * if turret_kill { 0.12 } else { 0.32 }
+                };
                 let base_s = if turret_kill { 8.0 } else { unit_cost * 0.9 };
 
                 let gained_t = (base_t * ring_bonus).round();
@@ -91,9 +105,11 @@ impl World {
             return Vec::new();
         }
 
-        let mut building_destroyers: Vec<(PlayerId, u8, bool, f32, f32)> = Vec::new();
+        // (killer, ring, is_hq, invested_cost, victim_t, is_hive_owner, is_attractor)
+        let mut building_destroyers: Vec<(PlayerId, u8, bool, f32, f32, bool, bool)> = Vec::new();
         let mut hq_destroyed_owners: Vec<(PlayerId, Option<PlayerId>, u8)> = Vec::new();
-        let mut affected_owners: HashMap<PlayerId, (Option<PlayerId>, u8)> = HashMap::new();
+        let mut affected_owners: HashMap<PlayerId, (Option<PlayerId>, u8, bool)> = HashMap::new();
+        let mut b_heat_events: Vec<(f32, f32, f32)> = Vec::new();
 
         {
             let zones = &self.zones;
@@ -102,9 +118,24 @@ impl World {
 
             buildings.retain(|b| {
                 if b.hp == 0 {
+                    if b.owner_id == 0 {
+                        // Neutral Attractor (kind == 6): last-hit gets large Essence reward
+                        b_heat_events.push((b.rel_x, b.rel_y, 5.0));
+                        if let Some(k) = b.last_hit_by {
+                            let ring = Self::ring_for_radius_with(
+                                (b.rel_x * b.rel_x + b.rel_y * b.rel_y).sqrt(),
+                                ring3_r,
+                                ring2_r,
+                            );
+                            building_destroyers.push((k, ring, false, 0.0, 0.0, false, true));
+                        }
+                        return false;
+                    }
+                    let is_hive_owner = players.get(&b.owner_id).is_some_and(|p| p.is_hive);
                     let ring = zones
                         .get(&b.owner_id)
                         .map(|z| {
+                            b_heat_events.push((z.x + b.rel_x, z.y + b.rel_y, 2.5));
                             Self::ring_for_radius_with(
                                 (z.x * z.x + z.y * z.y).sqrt(),
                                 ring3_r,
@@ -120,7 +151,7 @@ impl World {
                         tl.log_kill(b.last_hit_src, DST_BUILDING_OFFSET + b.kind, sr, ring);
                     }
                     if let Some(k) = b.last_hit_by {
-                        let victim_t = if b.kind == 0 {
+                        let victim_t = if b.kind == 0 && !is_hive_owner {
                             players.get(&b.owner_id).map(|p| p.trophies).unwrap_or(0.0)
                         } else {
                             0.0
@@ -131,6 +162,8 @@ impl World {
                             b.kind == 0,
                             b.invested_cost,
                             victim_t,
+                            is_hive_owner,
+                            false,
                         ));
                     }
                     if b.kind == 0 {
@@ -143,7 +176,7 @@ impl World {
                                     e.0 = b.last_hit_by;
                                 }
                             })
-                            .or_insert((b.last_hit_by, ring));
+                            .or_insert((b.last_hit_by, ring, is_hive_owner));
                     }
                     false
                 } else {
@@ -152,31 +185,60 @@ impl World {
             });
         }
 
+        for (hx, hy, hw) in b_heat_events {
+            self.record_combat_heat(hx, hy, hw);
+        }
+
         // Honest fixed-point BFS detachment on any destroyed non-HQ module;
         // attacker receives 100% reward for every detached module.
-        for (owner_id, (killer_opt, ring)) in affected_owners {
+        for (owner_id, (killer_opt, ring, is_hive_owner)) in affected_owners {
             let detached = self.prune_orphaned_buildings(owner_id);
             if let Some(k) = killer_opt {
                 for db in detached {
-                    building_destroyers.push((k, ring, false, db.invested_cost, 0.0));
+                    building_destroyers.push((
+                        k,
+                        ring,
+                        false,
+                        db.invested_cost,
+                        0.0,
+                        is_hive_owner,
+                        false,
+                    ));
                 }
             }
         }
 
-        for (k, ring, is_hq, invested_cost, victim_t) in building_destroyers {
+        for (k, ring, is_hq, invested_cost, victim_t, is_hive_owner, is_attractor) in
+            building_destroyers
+        {
             let ring_bonus = if ring >= 3 { 1.2 } else { 1.0 };
 
-            let base_e = if is_hq {
-                (invested_cost * 0.60).max(140.0)
+            let (base_e, base_t, base_s) = if is_attractor {
+                (
+                    self.config.pve.attractor_energy_reward,
+                    self.config.pve.attractor_trophy_reward,
+                    350.0,
+                )
+            } else if is_hive_owner {
+                if is_hq {
+                    (
+                        self.config.pve.hive_hq_energy_reward,
+                        self.config.pve.hive_hq_trophy_reward,
+                        300.0,
+                    )
+                } else {
+                    // Non-HQ hive modules grant energy & score, strictly 0 Essence
+                    ((invested_cost * 0.60).max(25.0), 0.0, 50.0)
+                }
+            } else if is_hq {
+                ((invested_cost * 0.60).max(140.0), 80.0 + victim_t, 250.0)
             } else {
-                (invested_cost * 0.60).max(30.0)
+                (
+                    (invested_cost * 0.60).max(30.0),
+                    24.0 + invested_cost * 0.08,
+                    75.0,
+                )
             };
-            let base_t = if is_hq {
-                80.0 + victim_t
-            } else {
-                24.0 + invested_cost * 0.08
-            };
-            let base_s = if is_hq { 250.0 } else { 75.0 };
 
             let gained_t = (base_t * ring_bonus).round();
             let gained_e = (base_e * ring_bonus).round();
@@ -186,8 +248,10 @@ impl World {
             }
             self.grant_trophies(k, gained_t);
             self.grant_energy(k, gained_e, 1.25);
-            if let Some(tl) = tlog.as_mut() {
-                tl.log_income(k, 4, gained_t);
+            if gained_t > 0.0 {
+                if let Some(tl) = tlog.as_mut() {
+                    tl.log_income(k, 4, gained_t);
+                }
             }
         }
 
@@ -251,15 +315,17 @@ impl World {
                 }
             }
             if let Some(p) = self.players.get(&owner_id) {
-                game_overs.push(GameOverEvent {
-                    player_id: p.id,
-                    user_id: p.user_id,
-                    score: p.score,
-                    survival_sec: p.survival_sec.round() as u32,
-                    kills: p.kills,
-                    buildings_destroyed: p.buildings_destroyed,
-                    reason: 1,
-                });
+                if !p.is_hive {
+                    game_overs.push(GameOverEvent {
+                        player_id: p.id,
+                        user_id: p.user_id,
+                        score: p.score,
+                        survival_sec: p.survival_sec.round() as u32,
+                        kills: p.kills,
+                        buildings_destroyed: p.buildings_destroyed,
+                        reason: 1,
+                    });
+                }
             }
             self.remove_player(owner_id);
         }

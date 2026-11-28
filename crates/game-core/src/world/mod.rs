@@ -4,6 +4,7 @@ mod commands;
 mod economy;
 mod hex;
 mod placement;
+mod pve;
 mod snapshot;
 mod spawn;
 mod units;
@@ -19,7 +20,10 @@ use rand::SeedableRng;
 use crate::config::BalanceConfig;
 use crate::spatial::SpatialGrid;
 use crate::telemetry::TelemetryLogger;
-use crate::types::{Building, EntityId, GameOverEvent, PlayerId, PlayerState, Projectile, Unit, Zone};
+use crate::types::{
+    Building, CombatHeatSpot, EntityId, GameOverEvent, PlayerId, PlayerState, Projectile, Unit,
+    Zone,
+};
 
 #[derive(Debug, Clone)]
 pub(super) struct BaseGridCache {
@@ -52,6 +56,9 @@ pub struct World {
     pub(super) building_world_snap: Vec<BuildingSnap>,
     pub(super) unit_world_snap: Vec<UnitSnap>,
     pub(super) base_grid_cache: HashMap<PlayerId, BaseGridCache>,
+    pub(super) hive_respawn_accum: f32,
+    pub(super) attractor_spawn_accum: f32,
+    pub(super) combat_heats: Vec<CombatHeatSpot>,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -77,6 +84,7 @@ impl World {
     pub fn new(mut config: BalanceConfig, seed: u64) -> Self {
         config.rebuild_caches();
         let map_r = config.world.map_radius;
+        let attr_init = config.pve.attractor_initial_delay_sec.max(2.0);
         Self {
             config,
             tick: 0,
@@ -98,6 +106,9 @@ impl World {
             building_world_snap: Vec::with_capacity(2048),
             unit_world_snap: Vec::with_capacity(2048),
             base_grid_cache: HashMap::new(),
+            hive_respawn_accum: 0.5,
+            attractor_spawn_accum: attr_init,
+            combat_heats: Vec::with_capacity(16),
         }
     }
 
@@ -130,6 +141,13 @@ impl World {
         for (bi, b) in self.buildings.iter().enumerate() {
             if b.hp == 0 {
                 self.building_world_snap.push(None);
+                continue;
+            }
+            if b.owner_id == 0 {
+                let br = self.config.pve.attractor_radius.max(20.0);
+                self.building_world_snap
+                    .push(Some((b.id, 0, b.rel_x, b.rel_y, br, b.hp, b.kind)));
+                self.building_grid.insert(bi, b.rel_x, b.rel_y);
                 continue;
             }
             let Some(z) = self.zones.get(&b.owner_id) else {
@@ -174,12 +192,10 @@ impl World {
             if player.spawn_protection_left > 0.0 {
                 player.spawn_protection_left = (player.spawn_protection_left - dt).max(0.0);
             }
-            if player.teleport_cooldown_left > 0.0 {
-                player.teleport_cooldown_left = (player.teleport_cooldown_left - dt).max(0.0);
-            }
         }
 
         self.step_bots(dt);
+        self.step_pve(dt);
         self.step_mass_gravity(dt);
         self.step_zone_repulsion(dt);
         self.step_base_regen(dt);
@@ -188,6 +204,7 @@ impl World {
         self.step_turrets(dt);
         self.step_projectiles(dt);
         self.step_units(dt);
+        self.step_teleport(dt);
         self.cluster_accum += dt;
         if self.cluster_accum >= 0.5 {
             self.cluster_accum %= 0.5;
@@ -207,13 +224,11 @@ impl World {
             if player.spawn_protection_left > 0.0 {
                 player.spawn_protection_left = (player.spawn_protection_left - dt).max(0.0);
             }
-            if player.teleport_cooldown_left > 0.0 {
-                player.teleport_cooldown_left = (player.teleport_cooldown_left - dt).max(0.0);
-            }
         }
 
         let t0 = Instant::now();
         self.step_bots(dt);
+        self.step_pve(dt);
         let t1 = Instant::now();
         self.step_mass_gravity(dt);
         self.step_zone_repulsion(dt);
@@ -228,6 +243,7 @@ impl World {
         self.step_projectiles(dt);
         let t5 = Instant::now();
         self.step_units(dt);
+        self.step_teleport(dt);
         let t6 = Instant::now();
         self.cluster_accum += dt;
         if self.cluster_accum >= 0.5 {

@@ -115,6 +115,70 @@ export function drawOverlays(
     ctx.restore();
   }
 
+  // Active teleport charge telegraphs
+  if (state.teleports.length > 0) {
+    for (const tp of state.teleports) {
+      const isOwn = tp.ownerId === state.playerId;
+      const srcZone = zonePositions.get(tp.ownerId);
+      const srcVisible =
+        srcZone !== undefined && (isOwn || isPointInVision(srcZone.x, srcZone.y, visionCircles));
+      const dstVisible = isOwn || isPointInVision(tp.targetX, tp.targetY, visionCircles);
+      if (!srcVisible && !dstVisible) continue;
+
+      const progress = Math.max(0, Math.min(1, tp.progressU8 / 255));
+      const radius = srcZone?.radius ?? state.balance.world.zone_base_radius;
+      const strokeColor = isOwn ? "#baa5e0" : "#ff8a80";
+      const fillColor = isOwn ? "rgba(186, 165, 224, 0.14)" : "rgba(255, 138, 128, 0.14)";
+      const startAng = -Math.PI / 2;
+      const endAng = startAng + progress * Math.PI * 2;
+
+      ctx.save();
+      if (srcVisible && srcZone) {
+        ctx.strokeStyle = isOwn ? "rgba(186, 165, 224, 0.35)" : "rgba(255, 138, 128, 0.35)";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(srcZone.x, srcZone.y, srcZone.radius + 8, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 4.5;
+        ctx.beginPath();
+        ctx.arc(srcZone.x, srcZone.y, srcZone.radius + 8, startAng, endAng);
+        ctx.stroke();
+      }
+
+      if (srcVisible && dstVisible && srcZone) {
+        ctx.strokeStyle = isOwn ? "rgba(186, 165, 224, 0.32)" : "rgba(255, 138, 128, 0.32)";
+        ctx.lineWidth = 1.6;
+        ctx.setLineDash([8, 6]);
+        ctx.beginPath();
+        ctx.moveTo(srcZone.x, srcZone.y);
+        ctx.lineTo(tp.targetX, tp.targetY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      if (dstVisible) {
+        ctx.fillStyle = fillColor;
+        ctx.strokeStyle = isOwn ? "rgba(186, 165, 224, 0.55)" : "rgba(255, 138, 128, 0.55)";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 6]);
+        ctx.beginPath();
+        ctx.arc(tp.targetX, tp.targetY, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(tp.targetX, tp.targetY, radius + 4, startAng, endAng);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
   const tpTarget =
     state.pendingTeleport ??
     (state.hasPointerHover ? { x: state.hoverWorldX, y: state.hoverWorldY } : null);

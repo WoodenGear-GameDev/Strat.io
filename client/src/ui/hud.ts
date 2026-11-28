@@ -210,10 +210,15 @@ export class HudController {
 
     this.btnActionUpgrade.classList.toggle("active", this.state.actionMode === "upgrade");
     this.btnActionSell.classList.toggle("active", this.state.actionMode === "sell");
-    this.btnTeleport.classList.toggle("active", this.state.teleportSelectMode);
-    this.btnTeleport.disabled = this.state.teleportCdSec > 0;
-    this.teleportLabel.textContent =
-      this.state.teleportCdSec > 0 ? `${this.state.teleportCdSec}с` : "Телепорт";
+    const ownTp =
+      this.state.playerId !== null
+        ? this.state.teleports.find((t) => t.ownerId === this.state.playerId)
+        : undefined;
+    this.btnTeleport.classList.toggle("active", this.state.teleportSelectMode || Boolean(ownTp));
+    this.btnTeleport.disabled = Boolean(ownTp);
+    this.teleportLabel.textContent = ownTp
+      ? `Заряд ${Math.round((ownTp.progressU8 / 255) * 100)}%`
+      : "Телепорт";
     this.btnCenter.classList.toggle("active", this.state.cameraAnchor === "drones");
     this.camAnchorLabel.textContent =
       this.state.cameraAnchor === "drones" && this.state.activeSquad > 0
@@ -382,6 +387,19 @@ export class HudController {
         this.input?.toggleReinforce(this.state.activeSquad);
       });
       this.squadBar.appendChild(rfBtn);
+
+      const homeBtn = document.createElement("button");
+      homeBtn.type = "button";
+      homeBtn.className = "squad-pill";
+      homeBtn.textContent = "⌂ Домой";
+      homeBtn.title = "Вернуть выбранный отряд на базу в режим патруля";
+      homeBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+      homeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        homeBtn.blur();
+        this.input?.recallSquadHome(this.state.activeSquad);
+      });
+      this.squadBar.appendChild(homeBtn);
     }
   }
 

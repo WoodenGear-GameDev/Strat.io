@@ -109,13 +109,18 @@ export function drawZones(
     const { x, y } = pos;
 
     const isOwn = z.playerId === state.playerId;
+    const isHive = (z.flags & 16) !== 0;
     if (!isOwn && !isCircleInVision(x, y, z.radius, visionCircles)) {
       continue;
     }
     const openLarge = state.getOpenLargeHexes(z.playerId);
 
     // Fill polygonal territory from open large hexes (no circular zone!)
-    ctx.fillStyle = isOwn ? "rgba(168, 199, 250, 0.08)" : "rgba(242, 139, 130, 0.08)";
+    ctx.fillStyle = isOwn
+      ? "rgba(168, 199, 250, 0.08)"
+      : isHive
+        ? "rgba(74, 222, 128, 0.10)"
+        : "rgba(242, 139, 130, 0.08)";
     for (const hex of openLarge.values()) {
       const p = hexToRel(hex.q, hex.r);
       drawHexPolygon(ctx, x + p.x, y + p.y, HEX_SIZE, ctx.fillStyle, undefined, 0);
@@ -123,7 +128,11 @@ export function drawZones(
 
     // Draw outer hexagonal perimeter (boundary edges only)
     let minTopY = y;
-    ctx.strokeStyle = isOwn ? "rgba(168, 199, 250, 0.78)" : "rgba(242, 139, 130, 0.78)";
+    ctx.strokeStyle = isOwn
+      ? "rgba(168, 199, 250, 0.78)"
+      : isHive
+        ? "rgba(74, 222, 128, 0.82)"
+        : "rgba(242, 139, 130, 0.78)";
     ctx.lineWidth = 2.2;
     ctx.beginPath();
     for (const hex of openLarge.values()) {
@@ -170,8 +179,8 @@ export function drawZones(
 
     const name = state.playerNames.get(z.playerId);
     if (name) {
-      const prefix = (z.flags & 4) !== 0 ? "👑 " : "";
-      ctx.fillStyle = (z.flags & 4) !== 0 ? "#e8c584" : "#e3e5e8";
+      const prefix = (z.flags & 2) !== 0 ? "👑 " : "";
+      ctx.fillStyle = (z.flags & 2) !== 0 ? "#e8c584" : isHive ? "#86efac" : "#e3e5e8";
       ctx.font = "600 13px system-ui, sans-serif";
       ctx.textAlign = "center";
       ctx.fillText(`${prefix}${name}`, x, minTopY - 10);
@@ -206,7 +215,13 @@ export function drawZones(
       parentX = 0;
       parentY = 0;
     }
-    ctx.strokeStyle = isOwn ? "rgba(168, 199, 250, 0.26)" : "rgba(242, 139, 130, 0.26)";
+    const ownerZone = state.zones.get(b.ownerId);
+    const isHive = ownerZone !== undefined && (ownerZone.flags & 16) !== 0;
+    ctx.strokeStyle = isOwn
+      ? "rgba(168, 199, 250, 0.26)"
+      : isHive
+        ? "rgba(74, 222, 128, 0.30)"
+        : "rgba(242, 139, 130, 0.26)";
     ctx.lineWidth = 1.6;
     ctx.beginPath();
     ctx.moveTo(zone.x + parentX, zone.y + parentY);

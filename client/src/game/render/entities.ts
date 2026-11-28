@@ -28,6 +28,8 @@ export function drawBuildings(
     if (!zone) continue;
 
     const isOwn = b.ownerId === state.playerId;
+    const snapZone = state.zones.get(b.ownerId);
+    const isHive = snapZone !== undefined && (snapZone.flags & 16) !== 0;
     const radius = getBuildingRadius(state.balance, b.kind);
     if (!isOwn && !isCircleInVision(zone.x + b.relX, zone.y + b.relY, radius, visionCircles)) {
       continue;
@@ -67,7 +69,7 @@ export function drawBuildings(
       }
     }
 
-    ctx.fillStyle = isOwn ? "#4a78c2" : "#c95b62";
+    ctx.fillStyle = isOwn ? "#4a78c2" : isHive ? "#2e8b57" : "#c95b62";
     ctx.strokeStyle = "#0e1013";
     ctx.lineWidth = 2;
 
@@ -86,7 +88,7 @@ export function drawBuildings(
           );
         }
         drawPolygon(ctx, x, y, 30, 6);
-        ctx.fillStyle = isOwn ? "#a8c7fa" : "#f2b8b5";
+        ctx.fillStyle = isOwn ? "#a8c7fa" : isHive ? "#86efac" : "#f2b8b5";
         drawPolygon(ctx, x, y, 10, 6);
         break;
       case 1: // Генератор (2-triangle Rhombus)
@@ -99,7 +101,7 @@ export function drawBuildings(
             b.relY,
             rhVerts,
             0.88,
-            isOwn ? "#4a78c2" : "#c95b62",
+            isOwn ? "#4a78c2" : isHive ? "#2e8b57" : "#c95b62",
             "#0e1013",
             2,
           );
@@ -109,7 +111,7 @@ export function drawBuildings(
         ctx.save();
         ctx.translate(x, y);
         ctx.rotate(now * 0.002);
-        ctx.fillStyle = "#e8c584";
+        ctx.fillStyle = isHive ? "#bbf7d0" : "#e8c584";
         drawPolygon(ctx, 0, 0, 8.5, 4);
         ctx.restore();
         break;
@@ -133,7 +135,7 @@ export function drawBuildings(
       }
       case 3: // Дроны (Large hex)
         drawPolygon(ctx, x, y, 30, 6);
-        ctx.fillStyle = isOwn ? "#284777" : "#87373d";
+        ctx.fillStyle = isOwn ? "#284777" : isHive ? "#1b5e3a" : "#87373d";
         drawPolygon(ctx, x, y, 16, 4);
         if ((b.meta & 1) !== 0) {
           ctx.fillStyle = "rgba(18, 19, 22, 0.85)";
@@ -146,11 +148,11 @@ export function drawBuildings(
         }
         break;
       case 5: // Узел (Large 1-hex module)
-        ctx.fillStyle = isOwn ? "#3f8ca8" : "#d4556b";
+        ctx.fillStyle = isOwn ? "#3f8ca8" : isHive ? "#22784a" : "#d4556b";
         drawPolygon(ctx, x, y, 30, 6);
-        ctx.fillStyle = isOwn ? "#255b70" : "#8f3344";
+        ctx.fillStyle = isOwn ? "#255b70" : isHive ? "#164d30" : "#8f3344";
         drawPolygon(ctx, x, y, 16, 6);
-        ctx.fillStyle = isOwn ? "#a8c7fa" : "#f2b8b5";
+        ctx.fillStyle = isOwn ? "#a8c7fa" : isHive ? "#86efac" : "#f2b8b5";
         drawPolygon(ctx, x, y, 8, 3);
         break;
       default:
@@ -216,6 +218,8 @@ export function drawUnits(
     const x = prev ? prev.x + (u.x - prev.x) * alpha : u.x;
     const y = prev ? prev.y + (u.y - prev.y) * alpha : u.y;
     const isOwn = u.ownerId === state.playerId;
+    const ownerZone = state.zones.get(u.ownerId);
+    const isHive = ownerZone !== undefined && (ownerZone.flags & 16) !== 0;
     if (!isOwn && !isPointInVision(x, y, visionCircles)) continue;
     if (isOwn && u.kind !== 4 && u.squad > 0) {
       const sc = squadCenters.get(u.squad) ?? { sx: 0, sy: 0, cnt: 0 };
@@ -237,21 +241,21 @@ export function drawUnits(
       // Титан — тяжёлый гекс с контрастным броне-кольцом и ядром
       ctx.strokeStyle = "#090b0e";
       ctx.lineWidth = 3.5;
-      ctx.fillStyle = isOwn ? "#ffd166" : "#ff6b4a";
+      ctx.fillStyle = isOwn ? "#ffd166" : isHive ? "#22c55e" : "#ff6b4a";
       drawPolygon(ctx, x, y, 17, 6);
       ctx.strokeStyle = "#181c24";
       ctx.lineWidth = 2;
-      ctx.fillStyle = isOwn ? "#ffe8a3" : "#ffb09c";
+      ctx.fillStyle = isOwn ? "#ffe8a3" : isHive ? "#bbf7d0" : "#ffb09c";
       drawPolygon(ctx, x, y, 8.5, 6);
     } else if (u.kind === 1) {
       // Стрелок — яркий ромб с контрастным контуром и светлой сердцевиной
       ctx.strokeStyle = "#090b0e";
       ctx.lineWidth = 3;
-      ctx.fillStyle = isOwn ? "#5ce68a" : "#ff9248";
+      ctx.fillStyle = isOwn ? "#5ce68a" : isHive ? "#4ade80" : "#ff9248";
       drawPolygon(ctx, x, y, 12, 4);
       ctx.strokeStyle = "#090b0e";
       ctx.lineWidth = 1.2;
-      ctx.fillStyle = isOwn ? "#e6fff0" : "#fff0e0";
+      ctx.fillStyle = isOwn ? "#e6fff0" : isHive ? "#dcfce7" : "#fff0e0";
       drawPolygon(ctx, x, y, 5, 4);
     } else {
       // Рейдер (0) — направленный истребитель-треугольник с ярким бликом
@@ -261,7 +265,7 @@ export function drawUnits(
       ctx.strokeStyle = "#090b0e";
       ctx.lineWidth = 2.8;
       ctx.lineJoin = "round";
-      ctx.fillStyle = isOwn ? "#69b8ff" : "#ff5757";
+      ctx.fillStyle = isOwn ? "#69b8ff" : isHive ? "#4ade80" : "#ff5757";
       ctx.beginPath();
       ctx.moveTo(12.5, 0);
       ctx.lineTo(-9, -8.5);
@@ -271,7 +275,7 @@ export function drawUnits(
       ctx.fill();
       ctx.stroke();
 
-      ctx.fillStyle = isOwn ? "#eef7ff" : "#ffe6e6";
+      ctx.fillStyle = isOwn ? "#eef7ff" : isHive ? "#dcfce7" : "#ffe6e6";
       ctx.beginPath();
       ctx.moveTo(7.5, 0);
       ctx.lineTo(-3, -3.5);
@@ -366,6 +370,112 @@ export function drawEffects(ctx: CanvasRenderingContext2D, state: ClientGameStat
     ctx.lineWidth = 2.5;
     ctx.beginPath();
     ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+export function drawAttractorsOverFog(
+  ctx: CanvasRenderingContext2D,
+  state: ClientGameState,
+  camX: number,
+  camY: number,
+  zoom: number,
+  width: number,
+  height: number,
+  now: number,
+): void {
+  if (state.attractors.length === 0) return;
+
+  ctx.save();
+  ctx.translate(width / 2, height / 2);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-camX, -camY);
+
+  const pulse = (now % 2200) / 2200;
+  for (const a of state.attractors) {
+    // Wide luminous beacon glow visible through fog of war
+    const glowR = a.radius * 5.2;
+    const grad = ctx.createRadialGradient(a.x, a.y, a.radius * 0.4, a.x, a.y, glowR);
+    grad.addColorStop(0, "rgba(255, 214, 102, 0.42)");
+    grad.addColorStop(0.45, "rgba(92, 230, 180, 0.16)");
+    grad.addColorStop(1, "rgba(255, 214, 102, 0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, glowR, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Expanding pulse wave ring
+    const waveR = a.radius + pulse * (a.radius * 3.8);
+    ctx.strokeStyle = `rgba(255, 214, 102, ${((1 - pulse) * 0.65).toFixed(2)})`;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, waveR, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Outer octagonal monolith
+    ctx.save();
+    ctx.translate(a.x, a.y);
+    ctx.rotate(now * 0.0005);
+    ctx.fillStyle = "#2b2416";
+    ctx.strokeStyle = "#ffd166";
+    ctx.lineWidth = 3;
+    drawPolygon(ctx, 0, 0, a.radius, 8);
+    ctx.restore();
+
+    // Inner rotating golden-cyan core crystal
+    ctx.save();
+    ctx.translate(a.x, a.y);
+    ctx.rotate(-now * 0.0014);
+    ctx.fillStyle = "#ffd166";
+    ctx.strokeStyle = "#0e1013";
+    ctx.lineWidth = 2;
+    drawPolygon(ctx, 0, 0, a.radius * 0.54, 4);
+    ctx.fillStyle = "#7cf2d4";
+    drawPolygon(ctx, 0, 0, a.radius * 0.24, 4);
+    ctx.restore();
+
+    // Always-visible HP bar + label
+    drawBar(ctx, a.x, a.y - a.radius - 14, 52, 5, a.hp / Math.max(1, a.maxHp));
+    ctx.fillStyle = "#ffe8a3";
+    ctx.font = "700 12px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(`Маяк · ${a.hp}`, a.x, a.y - a.radius - 22);
+  }
+  ctx.restore();
+
+  // Off-screen edge directional indicators for nearby attractors
+  const pad = 28;
+  for (const a of state.attractors) {
+    const sx = (a.x - camX) * zoom + width / 2;
+    const sy = (a.y - camY) * zoom + height / 2;
+    if (sx >= pad && sx <= width - pad && sy >= pad && sy <= height - pad) {
+      continue;
+    }
+    const ang = Math.atan2(sy - height / 2, sx - width / 2);
+    const halfW = width / 2 - pad;
+    const halfH = height / 2 - pad;
+    const cos = Math.cos(ang);
+    const sin = Math.sin(ang);
+    const tx = Math.abs(cos) > 0.001 ? halfW / Math.abs(cos) : Infinity;
+    const ty = Math.abs(sin) > 0.001 ? halfH / Math.abs(sin) : Infinity;
+    const t = Math.min(tx, ty);
+    const ix = width / 2 + cos * t;
+    const iy = height / 2 + sin * t;
+
+    ctx.save();
+    ctx.translate(ix, iy);
+    ctx.rotate(ang);
+    ctx.fillStyle = "rgba(255, 209, 102, 0.9)";
+    ctx.strokeStyle = "#0e1013";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(10, 0);
+    ctx.lineTo(-7, -7);
+    ctx.lineTo(-4, 0);
+    ctx.lineTo(-7, 7);
+    ctx.closePath();
+    ctx.fill();
     ctx.stroke();
     ctx.restore();
   }

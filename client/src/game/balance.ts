@@ -61,17 +61,42 @@ export interface WorldBalanceConfig {
   teleport_base_cost: number;
   teleport_dist_factor: number;
   teleport_ring_penalty: number;
-  teleport_cooldown_sec: number;
+  teleport_charge_sec: number;
+  teleport_patrol_pull_speed: number;
   teleport_zone_clearance: number;
   teleport_node_clearance: number;
+  camera_wasd_speed?: number;
   hex_size: number;
   bot_count: number;
+}
+
+export interface PveBalanceConfig {
+  hive_count: number;
+  hive_hq_level: number;
+  hive_target_nodes: number;
+  hive_target_barracks: number;
+  hive_target_generators: number;
+  hive_regrow_interval_sec: number;
+  hive_respawn_sec: number;
+  hive_aggro_range: number;
+  hive_gen_trigger_count: number;
+  hive_wave_size: number;
+  hive_hq_trophy_reward: number;
+  hive_hq_energy_reward: number;
+  attractor_max_active: number;
+  attractor_initial_delay_sec: number;
+  attractor_spawn_interval_sec: number;
+  attractor_hp: number;
+  attractor_radius: number;
+  attractor_trophy_reward: number;
+  attractor_energy_reward: number;
 }
 
 export interface BalanceConfig {
   world: WorldBalanceConfig;
   buildings: Record<string, BuildingConfig>;
   units?: Record<string, UnitConfig>;
+  pve?: PveBalanceConfig;
 }
 
 export const DEFAULT_BALANCE: BalanceConfig = balanceJson as BalanceConfig;
@@ -119,6 +144,7 @@ export async function loadBalanceConfig(): Promise<BalanceConfig> {
       world: { ...DEFAULT_BALANCE.world, ...(raw.world ?? {}) },
       buildings: raw.buildings ?? DEFAULT_BALANCE.buildings,
       units: raw.units ?? DEFAULT_BALANCE.units,
+      pve: { ...DEFAULT_BALANCE.pve!, ...(raw.pve ?? {}) },
     };
   } catch {
     return DEFAULT_BALANCE;

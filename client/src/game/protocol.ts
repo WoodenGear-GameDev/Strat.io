@@ -43,6 +43,28 @@ export interface SnapshotProjectile {
   y: number;
 }
 
+export interface SnapshotTeleport {
+  ownerId: number;
+  targetX: number;
+  targetY: number;
+  progressU8: number;
+}
+
+export interface SnapshotAttractor {
+  id: number;
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+  radius: number;
+}
+
+export interface SnapshotHeat {
+  x: number;
+  y: number;
+  intensityU8: number;
+}
+
 export interface PlayerMetaEntry {
   playerId: number;
   name: string;
@@ -71,6 +93,9 @@ export type ServerMessage =
       buildings: SnapshotBuilding[];
       units: SnapshotUnit[];
       projectiles: SnapshotProjectile[];
+      teleports: SnapshotTeleport[];
+      attractors: SnapshotAttractor[];
+      heats: SnapshotHeat[];
     }
   | { type: "PlayerMeta"; players: PlayerMetaEntry[] }
   | { type: "MatchLeaderboard"; entries: LeaderboardEntry[] }
@@ -280,6 +305,46 @@ export function decodeServerMessage(data: Uint8Array): ServerMessage | null {
         });
       }
 
+      const teleports: SnapshotTeleport[] = [];
+      if (pos + 2 <= data.length) {
+        const tpLen = readU16();
+        for (let i = 0; i < tpLen; i++) {
+          teleports.push({
+            ownerId: readU32(),
+            targetX: readF32(),
+            targetY: readF32(),
+            progressU8: readU8(),
+          });
+        }
+      }
+
+      const attractors: SnapshotAttractor[] = [];
+      if (pos + 2 <= data.length) {
+        const attrLen = readU16();
+        for (let i = 0; i < attrLen; i++) {
+          attractors.push({
+            id: readU32(),
+            x: readF32(),
+            y: readF32(),
+            hp: readU16(),
+            maxHp: readU16(),
+            radius: readF32(),
+          });
+        }
+      }
+
+      const heats: SnapshotHeat[] = [];
+      if (pos + 2 <= data.length) {
+        const heatLen = readU16();
+        for (let i = 0; i < heatLen; i++) {
+          heats.push({
+            x: readF32(),
+            y: readF32(),
+            intensityU8: readU8(),
+          });
+        }
+      }
+
       return {
         type: "Snapshot",
         tick,
@@ -294,6 +359,9 @@ export function decodeServerMessage(data: Uint8Array): ServerMessage | null {
         buildings,
         units,
         projectiles,
+        teleports,
+        attractors,
+        heats,
       };
     }
     case 0x83: {

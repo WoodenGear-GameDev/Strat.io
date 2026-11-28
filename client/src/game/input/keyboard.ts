@@ -1,11 +1,27 @@
 import type { InputController } from "./controller.ts";
 
+const CAMERA_PAN_KEYS = new Set([
+  "KeyW",
+  "KeyA",
+  "KeyS",
+  "KeyD",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+]);
+
 export function bindKeyboardEvents(ctrl: InputController): void {
   window.addEventListener("keydown", (e) => {
     const tag = document.activeElement?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA") return;
 
     if (ctrl.state.playerId === null) return;
+    if (CAMERA_PAN_KEYS.has(e.code)) {
+      e.preventDefault();
+      ctrl.pressedMoveKeys.add(e.code);
+      return;
+    }
     if (e.code === "Digit1") ctrl.toggleBuild(1);
     else if (e.code === "Digit2") ctrl.toggleBuild(2);
     else if (e.code === "Digit3") ctrl.toggleBuild(3);
@@ -38,9 +54,17 @@ export function bindKeyboardEvents(ctrl: InputController): void {
     else if (e.code === "KeyT") ctrl.toggleTeleportMode();
     else if (e.code === "Space") {
       e.preventDefault();
-      ctrl.centerOnBase();
+      ctrl.centerOnActiveFocus();
     } else if (e.code === "Escape") {
       ctrl.cancelModes();
     }
+  });
+
+  window.addEventListener("keyup", (e) => {
+    ctrl.pressedMoveKeys.delete(e.code);
+  });
+
+  window.addEventListener("blur", () => {
+    ctrl.pressedMoveKeys.clear();
   });
 }

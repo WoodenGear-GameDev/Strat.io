@@ -21,6 +21,8 @@ pub struct BalanceConfig {
     pub world: WorldConfig,
     pub buildings: HashMap<String, BuildingConfig>,
     pub units: HashMap<String, UnitConfig>,
+    #[serde(default)]
+    pub pve: PveConfig,
     #[serde(skip)]
     building_by_kind_cache: [Option<BuildingConfig>; MAX_KIND_SLOTS],
     #[serde(skip)]
@@ -176,12 +178,16 @@ pub struct WorldConfig {
     pub teleport_dist_factor: f32,
     #[serde(default = "default_tp_ring")]
     pub teleport_ring_penalty: f32,
-    #[serde(default = "default_tp_cd")]
-    pub teleport_cooldown_sec: f32,
+    #[serde(default = "default_tp_charge_sec")]
+    pub teleport_charge_sec: f32,
+    #[serde(default = "default_tp_patrol_pull_speed")]
+    pub teleport_patrol_pull_speed: f32,
     #[serde(default = "default_tp_zone_clearance")]
     pub teleport_zone_clearance: f32,
     #[serde(default = "default_tp_node_clearance")]
     pub teleport_node_clearance: f32,
+    #[serde(default = "default_camera_wasd_speed")]
+    pub camera_wasd_speed: f32,
     #[serde(default = "default_hex_size")]
     pub hex_size: f32,
     #[serde(default)]
@@ -215,14 +221,20 @@ fn default_tp_dist() -> f32 {
 fn default_tp_ring() -> f32 {
     0.30
 }
-fn default_tp_cd() -> f32 {
-    32.0
+fn default_tp_charge_sec() -> f32 {
+    1.8
+}
+fn default_tp_patrol_pull_speed() -> f32 {
+    320.0
 }
 fn default_tp_zone_clearance() -> f32 {
     150.0
 }
 fn default_tp_node_clearance() -> f32 {
     120.0
+}
+fn default_camera_wasd_speed() -> f32 {
+    650.0
 }
 fn default_hex_size() -> f32 {
     34.0
@@ -306,4 +318,54 @@ pub struct UnitConfig {
 
 fn default_supply_cost() -> u16 {
     1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PveConfig {
+    pub hive_count: usize,
+    pub hive_hq_level: u8,
+    pub hive_target_nodes: usize,
+    pub hive_target_barracks: usize,
+    pub hive_target_generators: usize,
+    pub hive_regrow_interval_sec: f32,
+    pub hive_respawn_sec: f32,
+    pub hive_aggro_range: f32,
+    pub hive_gen_trigger_count: usize,
+    pub hive_wave_size: usize,
+    pub hive_hq_trophy_reward: f32,
+    pub hive_hq_energy_reward: f32,
+    pub attractor_max_active: usize,
+    pub attractor_initial_delay_sec: f32,
+    pub attractor_spawn_interval_sec: f32,
+    pub attractor_hp: u16,
+    pub attractor_radius: f32,
+    pub attractor_trophy_reward: f32,
+    pub attractor_energy_reward: f32,
+}
+
+impl Default for PveConfig {
+    fn default() -> Self {
+        Self {
+            hive_count: 3,
+            hive_hq_level: 2,
+            hive_target_nodes: 2,
+            hive_target_barracks: 4,
+            hive_target_generators: 12,
+            hive_regrow_interval_sec: 3.0,
+            hive_respawn_sec: 25.0,
+            hive_aggro_range: 1150.0,
+            hive_gen_trigger_count: 6,
+            hive_wave_size: 7,
+            hive_hq_trophy_reward: 120.0,
+            hive_hq_energy_reward: 240.0,
+            attractor_max_active: 2,
+            attractor_initial_delay_sec: 18.0,
+            attractor_spawn_interval_sec: 45.0,
+            attractor_hp: 2600,
+            attractor_radius: 36.0,
+            attractor_trophy_reward: 150.0,
+            attractor_energy_reward: 220.0,
+        }
+    }
 }
