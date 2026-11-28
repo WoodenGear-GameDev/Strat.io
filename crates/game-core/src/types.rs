@@ -40,14 +40,6 @@ impl ArmyMode {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct BuildCombatLock {
-    pub rel_x: f32,
-    pub rel_y: f32,
-    pub radius: f32,
-    pub expires_at_sec: f32,
-}
-
 #[derive(Debug, Clone)]
 pub struct PlayerState {
     pub id: PlayerId,
@@ -75,7 +67,7 @@ pub struct PlayerState {
     pub last_damaged_sec: f32,
     pub bot_archetype: u8,
     pub regen_accum: f32,
-    pub build_combat_locks: Vec<BuildCombatLock>,
+    pub regen_enabled: bool,
     pub bot_known_intel: HashMap<PlayerId, BotKnownTarget>,
     pub bot_scout_angle: f32,
     pub last_teleport_sec: f32,
@@ -135,8 +127,6 @@ pub struct Unit {
     pub attack_cooldown_left: f32,
     pub last_hit_by: Option<PlayerId>,
     pub last_hit_src: u8,
-    pub rad_accum: f32,
-    pub in_lower_ring_sec: f32,
     pub regen_accum: f32,
     pub home_id: EntityId,
     pub knockback_vx: f32,

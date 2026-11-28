@@ -3,6 +3,7 @@ import type { InputController } from "../game/input.ts";
 import {
   encodeConfigureBuilding,
   encodeSellBuilding,
+  encodeToggleBaseRegen,
   encodeUpgradeBuilding,
   type LeaderboardEntry,
 } from "../game/protocol.ts";
@@ -12,11 +13,11 @@ import type { WsTransport } from "../transport/wsTransport.ts";
 
 export class HudController {
   private hudEnergy = document.getElementById("hud-energy") as HTMLElement;
+  private hudEnergyRate = document.getElementById("hud-energy-rate") as HTMLElement;
   private hudTrophies = document.getElementById("hud-trophies") as HTMLElement;
   private trophyChip = document.querySelector(".trophy-chip") as HTMLElement | null;
   private hudHqBtn = document.getElementById("hud-hq-btn") as HTMLButtonElement;
   private hudHqLevel = document.getElementById("hud-hq-level") as HTMLElement;
-  private hudHqReady = document.getElementById("hud-hq-ready") as HTMLElement;
   private hudUnits = document.getElementById("hud-units") as HTMLElement;
   private hudLeaderboard = document.getElementById("hud-leaderboard") as HTMLOListElement;
   private debugToggleBtn = document.getElementById("debug-toggle-btn") as HTMLButtonElement;
@@ -32,6 +33,8 @@ export class HudController {
   private bcardLevel = document.getElementById("bcard-level") as HTMLElement;
   private bcardHpFill = document.getElementById("bcard-hp-fill") as HTMLDivElement;
   private bcardHpText = document.getElementById("bcard-hp-text") as HTMLElement;
+  private bcardHq = document.getElementById("bcard-hq") as HTMLDivElement;
+  private bcardHqRegen = document.getElementById("bcard-hq-regen") as HTMLButtonElement;
   private bcardBarracks = document.getElementById("bcard-barracks") as HTMLDivElement;
   private bcardBarracksPause = document.getElementById("bcard-barracks-pause") as HTMLButtonElement;
   private bcardUnitBtns = [
@@ -57,9 +60,6 @@ export class HudController {
   private teleportLabel = document.getElementById("teleport-label") as HTMLElement;
   private btnCenter = document.getElementById("btn-center") as HTMLButtonElement;
   private camAnchorLabel = document.getElementById("cam-anchor-label") as HTMLElement;
-  private btnZoomIn = document.getElementById("btn-zoom-in") as HTMLButtonElement;
-  private btnZoomOut = document.getElementById("btn-zoom-out") as HTMLButtonElement;
-  private btnCancel = document.getElementById("btn-cancel") as HTMLButtonElement;
   private toastEl = document.getElementById("toast") as HTMLDivElement;
 
   private goScore = document.getElementById("go-score") as HTMLElement;
@@ -74,7 +74,7 @@ export class HudController {
   constructor(
     private state: ClientGameState,
     private transport: WsTransport,
-    private renderer: CanvasRenderer,
+    _renderer: CanvasRenderer,
   ) {}
 
   bindControls(input: InputController): void {
@@ -108,18 +108,15 @@ export class HudController {
     this.btnActionSell.addEventListener("click", () => input.toggleActionMode("sell"));
     this.btnTeleport.addEventListener("click", () => input.toggleTeleportMode());
     this.btnCenter.addEventListener("click", () => input.centerOnBase());
-    this.btnZoomIn.addEventListener("click", () =>
-      this.renderer.zoomAt(1.2, window.innerWidth / 2, window.innerHeight / 2),
-    );
-    this.btnZoomOut.addEventListener("click", () =>
-      this.renderer.zoomAt(0.83, window.innerWidth / 2, window.innerHeight / 2),
-    );
-    this.btnCancel.addEventListener("click", () => input.cancelModes());
 
     this.bcardUpgrade.addEventListener("click", () => {
       if (this.state.selectedBuildingId !== null) {
         this.transport.send(encodeUpgradeBuilding(this.state.selectedBuildingId));
       }
+    });
+
+    this.bcardHqRegen.addEventListener("click", () => {
+      this.transport.send(encodeToggleBaseRegen());
     });
 
     this.bcardBarracksPause.addEventListener("click", () => {
@@ -171,10 +168,6 @@ export class HudController {
     this.hudHqLevel.textContent = String(hqLevel);
     const ready = this.state.canUpgradeHq();
     this.hudHqBtn.classList.toggle("hq-ready", ready);
-    this.hudHqReady.classList.toggle("hidden", !ready);
-    if (ready) {
-      this.hudHqReady.textContent = `⬆ Ур.${hqLevel + 1}`;
-    }
   }
 
   private getEffectiveBuildCost(kind: number): number {
@@ -204,7 +197,7 @@ export class HudController {
         }
       }
       btn.title = beaconLocked
-        ? "Маяк [4] (нужно Ядро Ур. 3)"
+        ? "Узел [4] (нужно Ядро Ур. 3)"
         : tc > 0
           ? `${getBuildingConfigByKind(this.state.balance, kind)?.name ?? "Здание"} [${kind === 5 ? 4 : kind}] (${c}⚡ + ${tc}⚔)`
           : `${getBuildingConfigByKind(this.state.balance, kind)?.name ?? "Здание"} [${kind === 5 ? 4 : kind}]`;
@@ -228,11 +221,6 @@ export class HudController {
         : this.state.cameraAnchor === "drones"
           ? "Дроны"
           : "Ядро";
-    this.btnCancel.disabled =
-      this.state.buildKind === null &&
-      this.state.actionMode === null &&
-      !this.state.rallySelectMode &&
-      !this.state.teleportSelectMode;
 
     this.renderSquadBar();
 
@@ -262,11 +250,20 @@ export class HudController {
         this.bcardHpText.textContent = `${Math.ceil(b.hp)} / ${Math.ceil(b.maxHp)} HP`;
 
         const nextLvl = cfg?.levels[b.level];
-        const tierBlocked = b.kind !== 0 && b.level >= hqLevel;
+        const maxAllowedLvl = Math.min(3, hqLevel + 1);
+        const tierBlocked = b.kind !== 0 && b.level >= maxAllowedLvl;
+        const showHq = b.kind === 0;
         const showBarracks = b.kind === 3;
 
+        this.bcardHq.classList.toggle("hidden", !showHq);
         this.bcardBarracks.classList.toggle("hidden", !showBarracks);
         this.bcardUpgrade.classList.remove("hidden");
+
+        if (showHq) {
+          const regenOn = this.state.isBaseRegenEnabled();
+          this.bcardHqRegen.classList.toggle("active", regenOn);
+          this.bcardHqRegen.textContent = regenOn ? "Реген базы: ВКЛ" : "Реген базы: ВЫКЛ";
+        }
 
         if (showBarracks) {
           const isPaused = (b.meta & 0x01) !== 0;
@@ -290,7 +287,7 @@ export class HudController {
 
         if (tierBlocked) {
           this.bcardUpgrade.disabled = true;
-          this.bcardUpgradeLabel.textContent = `Нужно Ядро Ур.${b.level + 1}`;
+          this.bcardUpgradeLabel.textContent = `Нужно Ядро Ур.${b.level}`;
         } else if (nextLvl) {
           const tCost = nextLvl.trophy_cost ?? 0;
           const eCost = nextLvl.cost ?? 0;
@@ -421,10 +418,18 @@ export class HudController {
 
   updateSnapshotStats(): void {
     const eCap = this.state.getEnergyCap();
-    const tCap = this.state.getTrophyCap();
+    let income = 0;
+    if (this.state.playerId !== null) {
+      for (const b of this.state.buildings.values()) {
+        if (b.ownerId !== this.state.playerId) continue;
+        const cfg = getBuildingConfigByKind(this.state.balance, b.kind);
+        income += cfg?.levels[b.level - 1]?.income_per_sec ?? 0;
+      }
+    }
     this.hudEnergy.textContent = `${Math.floor(this.state.energy)} / ${Math.floor(eCap)}`;
-    this.hudTrophies.textContent = `${Math.floor(this.state.trophies)} / ${Math.floor(tCap)}`;
-    this.trophyChip?.classList.toggle("at-cap", this.state.trophies >= tCap - 1);
+    this.hudEnergyRate.textContent = `+${Math.round(income)}/с`;
+    this.hudTrophies.textContent = `${Math.floor(this.state.trophies)}`;
+    this.trophyChip?.classList.remove("at-cap");
     this.updateHqStatusUi();
     this.hudUnits.textContent = `${this.state.unitCount} / ${this.state.unitCap}`;
     this.hudTick.textContent = this.state.tick.toString();

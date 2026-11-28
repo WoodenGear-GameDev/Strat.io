@@ -16,7 +16,6 @@ export interface SnapshotBuilding {
   ownerId: number;
   kind: number;
   level: number;
-  mutation: number;
   meta: number;
   relX: number;
   relY: number;
@@ -172,6 +171,10 @@ export function encodeConfigureBuilding(buildingId: number, meta: number): Uint8
   return new Uint8Array(buf);
 }
 
+export function encodeToggleBaseRegen(): Uint8Array {
+  return new Uint8Array([0x0b]);
+}
+
 export function decodeServerMessage(data: Uint8Array): ServerMessage | null {
   if (data.length === 0) return null;
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -241,7 +244,6 @@ export function decodeServerMessage(data: Uint8Array): ServerMessage | null {
           ownerId: readU32(),
           kind: readU8(),
           level: readU8(),
-          mutation: readU8(),
           meta: readU8(),
           relX: readF32(),
           relY: readF32(),

@@ -1,4 +1,4 @@
-import { getBuildingConfigByKind, getBuildingRadius } from "../balance.ts";
+import { getBuildingConfigByKind, getBuildingRadius, getNodeHexRadius } from "../balance.ts";
 import {
   HEX_EDGE_DIRS,
   HEX_SIZE,
@@ -6,6 +6,7 @@ import {
   beaconExtensionCenter,
   hexKey,
   hexToRel,
+  insertHexDisk,
   relToHexRound,
   type ClientGameState,
   type VisionCircle,
@@ -23,47 +24,11 @@ export function drawOverlays(
   zonePositions: Map<number, ZonePosition>,
   visionCircles: VisionCircle[],
 ): void {
-  const now = performance.now();
-
-  // Building ruins (20s build lock indicator after destruction)
-  for (const ruin of state.buildingRuins) {
-    const z = zonePositions.get(ruin.ownerId);
-    if (!z) continue;
-    const rx = z.x + ruin.relX;
-    const ry = z.y + ruin.relY;
-    if (ruin.ownerId !== state.playerId && !isPointInVision(rx, ry, visionCircles)) {
-      continue;
-    }
-    const rem = Math.max(0, (ruin.expiresAtMs - now) / Math.max(1, ruin.expiresAtMs - ruin.createdAtMs));
-    ctx.save();
-    ctx.fillStyle = `rgba(32, 34, 40, ${0.45 + 0.3 * rem})`;
-    ctx.strokeStyle = `rgba(180, 120, 90, ${0.25 + 0.45 * rem})`;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(rx, ry, ruin.radius * 0.82, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    // Jagged rubble fragments
-    ctx.fillStyle = `rgba(92, 96, 108, ${0.45 + 0.35 * rem})`;
-    for (let k = 0; k < 4; k++) {
-      const a = k * 1.57 + 0.4;
-      const dist = ruin.radius * 0.38;
-      ctx.fillRect(rx + Math.cos(a) * dist - 3, ry + Math.sin(a) * dist - 2, 6, 4);
-    }
-    // Countdown arc
-    ctx.strokeStyle = `rgba(235, 160, 100, ${0.5 + 0.4 * rem})`;
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.arc(rx, ry, ruin.radius * 0.94, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * rem);
-    ctx.stroke();
-    ctx.restore();
-  }
-
   // Squad target markers & lines
   if (state.playerId !== null) {
     const squadPts = new Map<number, { sx: number; sy: number; cnt: number }>();
     for (const u of state.units.values()) {
-      if (u.ownerId !== state.playerId || u.kind === 4 || u.squad <= 0) continue;
+      if (u.ownerId !== state.playerId || u.squad <= 0) continue;
       const e = squadPts.get(u.squad) ?? { sx: 0, sy: 0, cnt: 0 };
       e.sx += u.x;
       e.sy += u.y;
@@ -112,6 +77,29 @@ export function drawOverlays(
       ctx.stroke();
       ctx.restore();
     }
+
+    // Показываем цель сразу при отправке гарнизона (пока сервер не прислал ID нового отряда)
+    const pendingTarget =
+      state.pendingNewSquadTarget ??
+      (state.armyMode === 1 && squadPts.size === 0 ? state.rallyPoint : null);
+    if (pendingTarget) {
+      const ownZone = zonePositions.get(state.playerId);
+      ctx.save();
+      ctx.strokeStyle = "rgba(232, 197, 132, 0.78)";
+      ctx.lineWidth = 1.8;
+      if (ownZone) {
+        ctx.setLineDash([6, 6]);
+        ctx.beginPath();
+        ctx.moveTo(ownZone.x, ownZone.y);
+        ctx.lineTo(pendingTarget.x, pendingTarget.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.beginPath();
+      ctx.arc(pendingTarget.x, pendingTarget.y, 9, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   if (state.teleportSelectMode && state.playerId !== null) {
@@ -136,17 +124,15 @@ export function drawOverlays(
       const tx = tpTarget.x;
       const ty = tpTarget.y;
       const r = Math.hypot(tx, ty);
-      const coreR = state.balance.world.core_radius ?? 280;
       const cost = state.computeTeleportCost(tx, ty);
-      const RING1_RADIUS = 1100;
-      const minR = state.rEq >= RING1_RADIUS ? RING1_RADIUS + zone.radius + 200 : coreR + zone.radius;
+      const maxR = state.maxRadiusForHq(state.getHqLevel(), zone.radius);
       const inVision = isPointInVision(tx, ty, visionCircles);
-      let valid =
-        inVision && r >= minR && r <= state.mapRadius - zone.radius && state.energy >= cost;
+      let valid = inVision && r <= maxR && state.energy >= cost;
       if (valid) {
+        const zoneClearance = state.balance.world.teleport_zone_clearance;
         for (const [pid, other] of zonePositions) {
           if (pid === state.playerId) continue;
-          if (Math.hypot(tx - other.x, ty - other.y) < zone.radius + other.radius + 150) {
+          if (Math.hypot(tx - other.x, ty - other.y) < zone.radius + other.radius + zoneClearance) {
             valid = false;
             break;
           }
@@ -295,22 +281,15 @@ function drawBeaconNewHexContour(
   valid: boolean,
 ): void {
   const openLarge = state.getOpenLargeHexes();
-  const newHexes = new Map<string, { q: number; r: number }>();
-  const rad = beaconExtRadius(1);
-  const hexSpan = Math.ceil(rad / (HEX_SIZE * 1.5)) + 1;
+  const nodeHexR = getNodeHexRadius(state.balance);
+  const candidateHexes = new Map<string, { q: number; r: number }>();
   const base = relToHexRound(centerRel.x, centerRel.y);
+  insertHexDisk(base.q, base.r, nodeHexR, candidateHexes);
 
-  for (let dq = -hexSpan; dq <= hexSpan; dq++) {
-    for (let dr = -hexSpan; dr <= hexSpan; dr++) {
-      const q = base.q + dq;
-      const r = base.r + dr;
-      const p = hexToRel(q, r);
-      if (Math.hypot(p.x - centerRel.x, p.y - centerRel.y) <= rad) {
-        const key = hexKey(q, r);
-        if (!openLarge.has(key)) {
-          newHexes.set(key, { q, r });
-        }
-      }
+  const newHexes = new Map<string, { q: number; r: number }>();
+  for (const [key, hex] of candidateHexes) {
+    if (!openLarge.has(key)) {
+      newHexes.set(key, hex);
     }
   }
 

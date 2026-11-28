@@ -52,24 +52,14 @@ export function drawArenaBorder(ctx: CanvasRenderingContext2D, mapRadius: number
 }
 
 export function drawCoreAndRings(ctx: CanvasRenderingContext2D, state: ClientGameState): void {
-  const coreR = state.balance.world.core_radius ?? 280;
+  const ring3R = state.balance.world.ring3_radius;
+  const ring2R = state.balance.world.ring2_radius;
 
-  // Central repelling core (flat matte Material 3 Expressive rings)
-  ctx.fillStyle = "rgba(168, 199, 250, 0.08)";
+  // Dense central Ring 3 tint (no empty core void)
+  ctx.fillStyle = "rgba(186, 165, 224, 0.045)";
   ctx.beginPath();
-  ctx.arc(0, 0, coreR, 0, Math.PI * 2);
+  ctx.arc(0, 0, ring3R, 0, Math.PI * 2);
   ctx.fill();
-
-  ctx.fillStyle = "rgba(168, 199, 250, 0.12)";
-  ctx.beginPath();
-  ctx.arc(0, 0, coreR * 0.45, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.strokeStyle = "rgba(168, 199, 250, 0.45)";
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.arc(0, 0, coreR, 0, Math.PI * 2);
-  ctx.stroke();
 
   // Subtle equilibrium radius ring for own player
   if (state.playerId !== null) {
@@ -83,17 +73,17 @@ export function drawCoreAndRings(ctx: CanvasRenderingContext2D, state: ClientGam
     ctx.setLineDash([]);
   }
 
-  // Ring boundaries (Ring 1 Cradle: 1100, Ring 2/3 Storm Periphery: 2150)
-  ctx.strokeStyle = "rgba(168, 199, 250, 0.18)";
+  // Ring boundaries: Ring 3 (center, 0..ring3R), Ring 2 (ring3R..ring2R), Ring 1 (outer, ring2R..mapR)
+  ctx.strokeStyle = "rgba(186, 165, 224, 0.28)";
   ctx.lineWidth = 2;
   ctx.setLineDash([16, 12]);
   ctx.beginPath();
-  ctx.arc(0, 0, 1100, 0, Math.PI * 2);
+  ctx.arc(0, 0, ring3R, 0, Math.PI * 2);
   ctx.stroke();
 
-  ctx.strokeStyle = "rgba(186, 165, 224, 0.22)";
+  ctx.strokeStyle = "rgba(168, 199, 250, 0.20)";
   ctx.beginPath();
-  ctx.arc(0, 0, 2150, 0, Math.PI * 2);
+  ctx.arc(0, 0, ring2R, 0, Math.PI * 2);
   ctx.stroke();
   ctx.setLineDash([]);
 
@@ -101,8 +91,9 @@ export function drawCoreAndRings(ctx: CanvasRenderingContext2D, state: ClientGam
   ctx.fillStyle = "rgba(194, 199, 207, 0.44)";
   ctx.font = "600 13px system-ui, sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText("Кольцо 2 · Кристаллы ×2", 0, -1115);
-  ctx.fillText("Кольцо 3 · Эндгейм (Маяки)", 0, -2165);
+  ctx.fillText("Кольцо 3 · Центр (Ядро 3+ / Узлы)", 0, -(ring3R - 22));
+  ctx.fillText("Кольцо 2 · Мидгейм (Ядро 2)", 0, -(ring2R - 22));
+  ctx.fillText("Кольцо 1 · Старт (Ядро 1)", 0, -(state.mapRadius - 36));
 }
 
 export function drawZones(
@@ -288,19 +279,25 @@ export function drawOwnHexGrid(
       }
     }
   } else {
-    // Draw triangular sub-sectors so player clearly sees all 6 sectors per hex for rhombuses
+    // Draw the 3 non-overlapping rhombus sectors (0..2) inside each open hex
     for (const hex of openLarge.values()) {
       const c = hexToRel(hex.q, hex.r);
       const cx = zone.x + c.x;
       const cy = zone.y + c.y;
-      for (let s = 0; s < 6; s++) {
+      for (let sector = 0; sector < 3; sector++) {
+        const s = sector * 2;
+        const sNext = s + 1;
         const v0 = hexVertex(hex.q, hex.r, s);
-        const v1 = hexVertex(hex.q, hex.r, (s + 1) % 6);
-        const busy = occupiedTris.has(triKey(hex.q, hex.r, s));
+        const v1 = hexVertex(hex.q, hex.r, sNext);
+        const v2 = hexVertex(hex.q, hex.r, (s + 2) % 6);
+        const busy =
+          occupiedTris.has(triKey(hex.q, hex.r, s)) ||
+          occupiedTris.has(triKey(hex.q, hex.r, sNext));
         ctx.beginPath();
         ctx.moveTo(cx, cy);
         ctx.lineTo(zone.x + v0.x, zone.y + v0.y);
         ctx.lineTo(zone.x + v1.x, zone.y + v1.y);
+        ctx.lineTo(zone.x + v2.x, zone.y + v2.y);
         ctx.closePath();
         ctx.fillStyle = busy ? "rgba(13, 14, 17, 0.24)" : "rgba(168, 199, 250, 0.06)";
         ctx.fill();

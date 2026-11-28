@@ -1,4 +1,6 @@
-export const HEX_SIZE = 34;
+import { DEFAULT_BALANCE, getNodeHexRadius } from "./balance.ts";
+
+export const HEX_SIZE = DEFAULT_BALANCE.world.hex_size;
 const SQRT3 = Math.sqrt(3);
 
 export const HEX_EDGE_DIRS: readonly [number, number][] = [
@@ -41,7 +43,7 @@ export function triKey(q: number, r: number, s: number): string {
 }
 
 export function isLargeBuilding(kind: number): boolean {
-  return kind === 0 || kind === 2 || kind === 3;
+  return kind === 0 || kind === 2 || kind === 3 || kind === 5;
 }
 
 export function hexToRel(q: number, r: number): Point2D {
@@ -83,17 +85,43 @@ export function hexVertex(q: number, r: number, i: number): Point2D {
   return { x: c.x + Math.cos(ang) * HEX_SIZE, y: c.y + Math.sin(ang) * HEX_SIZE };
 }
 
+export function triNeighbors(q: number, r: number, s: number): TriCoord[] {
+  const [dq, dr] = HEX_EDGE_DIRS[s];
+  return [
+    { q, r, s: (s + 1) % 6 },
+    { q, r, s: (s + 5) % 6 },
+    { q: q + dq, r: r + dr, s: (s + 3) % 6 },
+  ];
+}
+
+export function insertHexDisk(
+  centerQ: number,
+  centerR: number,
+  hexR: number,
+  out: Map<string, HexCoord>,
+): void {
+  for (let dq = -hexR; dq <= hexR; dq++) {
+    const minDr = Math.max(-hexR, -dq - hexR);
+    const maxDr = Math.min(hexR, -dq + hexR);
+    for (let dr = minDr; dr <= maxDr; dr++) {
+      const q = centerQ + dq;
+      const r = centerR + dr;
+      out.set(hexKey(q, r), { q, r });
+    }
+  }
+}
+
 export function collectRhombuses(openHexes: Map<string, HexCoord>): Rhombus[] {
   const out: Rhombus[] = [];
   for (const hex of openHexes.values()) {
     const c = hexToRel(hex.q, hex.r);
-    for (let s = 0; s < 6; s++) {
-      const sNext = (s + 1) % 6;
+    for (let sector = 0; sector < 3; sector++) {
+      const s = sector * 2;
+      const sNext = s + 1;
       const v0 = hexVertex(hex.q, hex.r, s);
       const v1 = hexVertex(hex.q, hex.r, sNext);
       const v2 = hexVertex(hex.q, hex.r, (s + 2) % 6);
 
-      // 1. Internal rhombus (triangles s and s+1 inside hex)
       out.push({
         tris: [
           { q: hex.q, r: hex.r, s },
@@ -102,23 +130,6 @@ export function collectRhombuses(openHexes: Map<string, HexCoord>): Rhombus[] {
         center: { x: (c.x + v1.x) * 0.5, y: (c.y + v1.y) * 0.5 },
         verts: [c, v0, v1, v2],
       });
-
-      // 2. Boundary rhombus across edge s into neighbor hex
-      const [dq, dr] = HEX_EDGE_DIRS[s];
-      const nq = hex.q + dq;
-      const nr = hex.r + dr;
-      if (openHexes.has(hexKey(nq, nr)) && (hex.q < nq || (hex.q === nq && hex.r < nr))) {
-        const nc = hexToRel(nq, nr);
-        const sOpp = (s + 3) % 6;
-        out.push({
-          tris: [
-            { q: hex.q, r: hex.r, s },
-            { q: nq, r: nr, s: sOpp },
-          ],
-          center: { x: (v0.x + v1.x) * 0.5, y: (v0.y + v1.y) * 0.5 },
-          verts: [c, v0, nc, v1],
-        });
-      }
     }
   }
   return out;
@@ -129,34 +140,20 @@ export function findLocalRhombusVerts(
   relY: number,
 ): [Point2D, Point2D, Point2D, Point2D] | null {
   const base = relToHexRound(relX, relY);
+  const c = hexToRel(base.q, base.r);
   let bestVerts: [Point2D, Point2D, Point2D, Point2D] | null = null;
   let bestDist = Infinity;
 
-  for (let dq = -1; dq <= 1; dq++) {
-    for (let dr = -1; dr <= 1; dr++) {
-      const q = base.q + dq;
-      const r = base.r + dr;
-      const c = hexToRel(q, r);
-      for (let s = 0; s < 6; s++) {
-        const sNext = (s + 1) % 6;
-        const v0 = hexVertex(q, r, s);
-        const v1 = hexVertex(q, r, sNext);
-        const v2 = hexVertex(q, r, (s + 2) % 6);
-
-        const dIn = Math.hypot((c.x + v1.x) * 0.5 - relX, (c.y + v1.y) * 0.5 - relY);
-        if (dIn < bestDist) {
-          bestDist = dIn;
-          bestVerts = [c, v0, v1, v2];
-        }
-
-        const [edq, edr] = HEX_EDGE_DIRS[s];
-        const nc = hexToRel(q + edq, r + edr);
-        const dOut = Math.hypot((v0.x + v1.x) * 0.5 - relX, (v0.y + v1.y) * 0.5 - relY);
-        if (dOut < bestDist) {
-          bestDist = dOut;
-          bestVerts = [c, v0, nc, v1];
-        }
-      }
+  for (let sector = 0; sector < 3; sector++) {
+    const s = sector * 2;
+    const sNext = s + 1;
+    const v0 = hexVertex(base.q, base.r, s);
+    const v1 = hexVertex(base.q, base.r, sNext);
+    const v2 = hexVertex(base.q, base.r, (s + 2) % 6);
+    const dIn = Math.hypot((c.x + v1.x) * 0.5 - relX, (c.y + v1.y) * 0.5 - relY);
+    if (dIn < bestDist) {
+      bestDist = dIn;
+      bestVerts = [c, v0, v1, v2];
     }
   }
   return bestVerts;
@@ -169,15 +166,13 @@ export function coreHexRadius(level: number): number {
 }
 
 export function hqZoneRadius(level: number): number {
-  if (level <= 1) return 95;
+  if (level <= 1) return DEFAULT_BALANCE.world.zone_base_radius;
   if (level === 2) return 145;
   return 200;
 }
 
-export function beaconExtRadius(level: number): number {
-  if (level <= 1) return 56;
-  if (level === 2) return 70;
-  return 85;
+export function beaconExtRadius(_level: number): number {
+  return getNodeHexRadius(DEFAULT_BALANCE) * HEX_SIZE * SQRT3;
 }
 
 export function beaconExtensionCenter(

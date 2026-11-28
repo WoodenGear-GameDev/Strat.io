@@ -145,26 +145,13 @@ export function drawBuildings(
           ctx.fillRect(x + 1.5, y - 5, 3, 10);
         }
         break;
-      case 5: // Маяк (2-triangle Rhombus)
-        if (rhVerts) {
-          drawRhombusPoly(
-            ctx,
-            zx,
-            zy,
-            b.relX,
-            b.relY,
-            rhVerts,
-            0.88,
-            isOwn ? "#3f8ca8" : "#d4556b",
-            "#0e1013",
-            2,
-          );
-        } else {
-          ctx.fillStyle = isOwn ? "#3f8ca8" : "#d4556b";
-          drawPolygon(ctx, x, y, 18.5, 6);
-        }
+      case 5: // Узел (Large 1-hex module)
+        ctx.fillStyle = isOwn ? "#3f8ca8" : "#d4556b";
+        drawPolygon(ctx, x, y, 30, 6);
+        ctx.fillStyle = isOwn ? "#255b70" : "#8f3344";
+        drawPolygon(ctx, x, y, 16, 6);
         ctx.fillStyle = isOwn ? "#a8c7fa" : "#f2b8b5";
-        drawPolygon(ctx, x, y, 7.5, 3);
+        drawPolygon(ctx, x, y, 8, 3);
         break;
       default:
         ctx.beginPath();

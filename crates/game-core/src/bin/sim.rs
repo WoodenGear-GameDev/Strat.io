@@ -1,7 +1,7 @@
 use game_core::config::BalanceConfig;
 use game_core::protocol::ClientMessage;
 use game_core::types::{ArmyMode, PlayerId};
-use game_core::world::{StepTimings, World, RING1_RADIUS};
+use game_core::world::{StepTimings, World};
 use std::env;
 use std::fs;
 use std::time::Instant;
@@ -411,7 +411,7 @@ fn main() {
             let own_units = world
                 .units
                 .iter()
-                .filter(|u| u.owner_id == agent.id && u.kind != 4)
+                .filter(|u| u.owner_id == agent.id)
                 .count();
             let threshold = ((unit_cap as usize * 2) / 3).max(3);
             if let Some(own_z) = world.zones.get(&agent.id) {
@@ -434,7 +434,7 @@ fn main() {
                                 continue;
                             }
                             let oz_r = oz.x.hypot(oz.y);
-                            if hq_lvl >= 2 && oz_r < RING1_RADIUS {
+                            if hq_lvl >= 2 && oz_r > world.config.world.ring2_radius {
                                 continue;
                             }
                             let d = (oz.x - zx).hypot(oz.y - zy);

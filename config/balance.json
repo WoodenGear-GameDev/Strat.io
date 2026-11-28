@@ -7,12 +7,19 @@
     "zone_repulsion_strength": 120.0,
     "sell_refund_ratio": 0.75,
     "starting_energy": 140.0,
-    "core_radius": 280.0,
-    "core_push_strength": 28.0,
+    "ring3_radius": 1050.0,
+    "ring2_radius": 2150.0,
+    "gravity_pull_strength": 65.0,
+    "base_regen_hp_per_sec_pct": 0.04,
+    "base_regen_hq_mult": 0.4,
+    "base_regen_energy_per_hp": 0.09,
     "teleport_base_cost": 150.0,
     "teleport_dist_factor": 0.11,
     "teleport_ring_penalty": 0.30,
     "teleport_cooldown_sec": 32.0,
+    "teleport_zone_clearance": 150.0,
+    "teleport_node_clearance": 120.0,
+    "hex_size": 34.0,
     "bot_count": 15
   },
   "buildings": {
@@ -26,7 +33,6 @@
           "cost": 0.0,
           "trophy_cost": 0.0,
           "energy_cap": 400.0,
-          "trophy_cap": 200.0,
           "hp": 1800,
           "income_per_sec": 3.0,
           "fire_rate": 0.0,
@@ -40,7 +46,6 @@
           "cost": 0.0,
           "trophy_cost": 85.0,
           "energy_cap": 950.0,
-          "trophy_cap": 420.0,
           "hp": 3200,
           "income_per_sec": 5.0,
           "fire_rate": 0.0,
@@ -54,7 +59,6 @@
           "cost": 0.0,
           "trophy_cost": 320.0,
           "energy_cap": 2000.0,
-          "trophy_cap": 600.0,
           "hp": 3800,
           "income_per_sec": 8.0,
           "fire_rate": 0.0,
@@ -74,6 +78,7 @@
       "levels": [
         {
           "cost": 20.0,
+          "energy_cap": 60.0,
           "hp": 120,
           "income_per_sec": 1.8,
           "fire_rate": 0.0,
@@ -85,6 +90,7 @@
         },
         {
           "cost": 45.0,
+          "energy_cap": 120.0,
           "hp": 200,
           "income_per_sec": 3.5,
           "fire_rate": 0.0,
@@ -96,6 +102,7 @@
         },
         {
           "cost": 95.0,
+          "energy_cap": 220.0,
           "hp": 300,
           "income_per_sec": 6.0,
           "fire_rate": 0.0,
@@ -204,15 +211,16 @@
     },
     "beacon": {
       "kind_id": 5,
-      "name": "Маяк",
-      "radius": 20.0,
+      "name": "Узел",
+      "radius": 28.0,
       "levels": [
         { "cost": 130.0, "trophy_cost": 90.0, "hp": 450 },
         { "cost": 280.0, "trophy_cost": 180.0, "hp": 750 },
         { "cost": 520.0, "trophy_cost": 340.0, "hp": 1100 }
       ],
       "effects": {
-        "zone_radius_bonus": 56.0
+        "node_hex_radius": 2,
+        "node_cost_mult": 1.65
       }
     }
   },

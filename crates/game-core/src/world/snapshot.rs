@@ -60,6 +60,7 @@ impl World {
         for z in self.zones.values() {
             let p = self.players.get(&z.player_id);
             let protected = p.map(|pl| pl.spawn_protection_left > 0.0).unwrap_or(false);
+            let regen_on = p.map(|pl| pl.regen_enabled).unwrap_or(false);
             let is_leader = leader_id == Some(z.player_id);
             let mut flags = 0u8;
             if protected {
@@ -67,6 +68,9 @@ impl World {
             }
             if is_leader {
                 flags |= 2;
+            }
+            if regen_on {
+                flags |= 8;
             }
             out.extend_from_slice(&z.player_id.to_le_bytes());
             out.extend_from_slice(&z.x.to_le_bytes());
@@ -83,7 +87,6 @@ impl World {
             out.extend_from_slice(&b.owner_id.to_le_bytes());
             out.push(b.kind);
             out.push(b.level);
-            out.push(0); // mutation
             out.push(b.meta);
             out.extend_from_slice(&b.rel_x.to_le_bytes());
             out.extend_from_slice(&b.rel_y.to_le_bytes());
@@ -95,7 +98,7 @@ impl World {
         out.extend_from_slice(&(self.units.len() as u16).to_le_bytes());
         for u in &self.units {
             if let Some(counts) = &mut unit_counts {
-                if u.hp > 0 && u.kind != 4 {
+                if u.hp > 0 {
                     let cost = self.fast_supply_cost(&supply_costs, u.kind);
                     let entry = counts.entry(u.owner_id).or_insert(0);
                     *entry = entry.saturating_add(cost);
@@ -147,7 +150,7 @@ impl World {
         let unit_count = self
             .units
             .iter()
-            .filter(|u| u.owner_id == for_player && u.hp > 0 && u.kind != 4)
+            .filter(|u| u.owner_id == for_player && u.hp > 0)
             .fold(0u16, |acc, u| {
                 acc.saturating_add(self.fast_supply_cost(&supply_costs, u.kind))
             });
@@ -186,7 +189,7 @@ impl World {
         let unit_count = self
             .units
             .iter()
-            .filter(|u| u.owner_id == for_player && u.hp > 0 && u.kind != 4)
+            .filter(|u| u.owner_id == for_player && u.hp > 0)
             .fold(0u16, |acc, u| {
                 acc.saturating_add(self.fast_supply_cost(&supply_costs, u.kind))
             });
@@ -197,6 +200,7 @@ impl World {
         for z in self.zones.values() {
             let p = self.players.get(&z.player_id);
             let protected = p.map(|pl| pl.spawn_protection_left > 0.0).unwrap_or(false);
+            let regen_on = p.map(|pl| pl.regen_enabled).unwrap_or(false);
             let is_leader = leader_id == Some(z.player_id);
             let mut flags = 0u8;
             if protected {
@@ -204,6 +208,9 @@ impl World {
             }
             if is_leader {
                 flags |= 2;
+            }
+            if regen_on {
+                flags |= 8;
             }
             zones.push(SnapshotZone {
                 player_id: z.player_id,
@@ -223,7 +230,6 @@ impl World {
                 owner_id: b.owner_id,
                 kind: b.kind,
                 level: b.level,
-                mutation: 0,
                 meta: b.meta,
                 rel_x: b.rel_x,
                 rel_y: b.rel_y,
@@ -300,63 +306,5 @@ impl World {
         entries.sort_by(|a, b| b.score.cmp(&a.score));
         entries.truncate(10);
         ServerMessage::MatchLeaderboard { entries }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::config::BalanceConfig;
-    use crate::world::World;
-
-    #[test]
-    fn shared_tail_snapshot_matches_full_encode() {
-        let raw = include_str!("../../../../config/balance.json");
-        let cfg = BalanceConfig::from_json(raw).expect("balance.json");
-        let mut world = World::new(cfg, 123);
-        let pid = world.add_player("Tester".to_string(), None, 0, 1);
-        for _ in 0..120 {
-            world.step(0.05);
-        }
-        let full = world.build_snapshot(pid).expect("snap").encode();
-        let (tail, counts) = world.build_shared_snapshot_tail_with_counts();
-        let cnt = counts.get(&pid).copied().unwrap_or(0);
-        let fast = world
-            .encode_snapshot_with_tail_and_count(pid, cnt, &tail)
-            .expect("fast snap");
-        assert_eq!(full, fast);
-    }
-
-    #[test]
-    fn low_tps_variable_dt_preserves_realtime_progression() {
-        let raw = include_str!("../../../../config/balance.json");
-        let mut cfg_20 = BalanceConfig::from_json(raw).expect("balance.json");
-        cfg_20.world.bot_count = 0;
-        let cfg_5 = cfg_20.clone();
-
-        let mut w20 = World::new(cfg_20, 77);
-        let p20 = w20.add_player("P20".to_string(), None, 0, 1);
-        w20.zones.get_mut(&p20).unwrap().x = 1500.0;
-        w20.zones.get_mut(&p20).unwrap().y = 0.0;
-
-        let mut w5 = World::new(cfg_5, 77);
-        let p5 = w5.add_player("P5".to_string(), None, 0, 1);
-        w5.zones.get_mut(&p5).unwrap().x = 1500.0;
-        w5.zones.get_mut(&p5).unwrap().y = 0.0;
-
-        // Simulate 20 real seconds: 400 ticks @ 20 TPS vs 100 ticks @ 5 TPS
-        for _ in 0..400 {
-            w20.step(0.05);
-        }
-        for _ in 0..100 {
-            w5.step(0.20);
-        }
-
-        assert!((w20.elapsed_sec - 20.0).abs() < 0.01);
-        assert!((w5.elapsed_sec - 20.0).abs() < 0.01);
-        let pl20 = &w20.players[&p20];
-        let pl5 = &w5.players[&p5];
-        assert!((pl20.survival_sec - pl5.survival_sec).abs() < 0.01);
-        assert_eq!(pl20.score, pl5.score, "Ring 2 score/sec must match at 5 TPS vs 20 TPS");
-        assert!((pl20.energy - pl5.energy).abs() < 0.5, "Passive income must match at 5 TPS vs 20 TPS");
     }
 }

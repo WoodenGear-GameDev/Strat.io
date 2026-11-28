@@ -4,7 +4,7 @@ use std::f32::consts::TAU;
 use rand::Rng;
 
 use crate::telemetry::SRC_UNKNOWN;
-use crate::types::{EntityId, PlayerId, Unit};
+use crate::types::{PlayerId, Unit};
 
 use super::World;
 
@@ -33,17 +33,6 @@ impl World {
             .unwrap_or(1)
     }
 
-    #[allow(dead_code)]
-    pub(super) fn hq_level_map(&self) -> HashMap<PlayerId, u8> {
-        let mut map = HashMap::new();
-        for b in &self.buildings {
-            if b.kind == 0 {
-                map.insert(b.owner_id, b.level);
-            }
-        }
-        map
-    }
-
     pub(super) fn energy_cap_for_hq(&self, hq_lvl: u8) -> f32 {
         let cfg_cap = self
             .config
@@ -62,22 +51,19 @@ impl World {
         }
     }
 
-    pub(super) fn trophy_cap_for_hq(&self, hq_lvl: u8) -> f32 {
-        let cfg_cap = self
-            .config
-            .building_by_kind(0)
-            .and_then(|c| c.levels.get(usize::from(hq_lvl.saturating_sub(1))))
-            .map(|l| l.trophy_cap)
-            .unwrap_or(0.0);
-        if cfg_cap > 0.0 {
-            cfg_cap
-        } else {
-            match hq_lvl {
-                0 | 1 => 200.0,
-                2 => 420.0,
-                _ => 600.0,
+    pub(super) fn energy_cap_for_player(&self, player_id: PlayerId) -> f32 {
+        let hq_lvl = self.hq_level_of(player_id);
+        let mut cap = self.energy_cap_for_hq(hq_lvl);
+        if let Some(gen_cfg) = self.config.building_by_kind(1) {
+            for b in &self.buildings {
+                if b.owner_id == player_id && b.kind == 1 && b.hp > 0 {
+                    if let Some(lvl) = gen_cfg.levels.get(usize::from(b.level.saturating_sub(1))) {
+                        cap += lvl.energy_cap;
+                    }
+                }
             }
         }
+        cap
     }
 
     pub(super) fn unit_supply_cost(&self, ukind: u8) -> u16 {
@@ -98,54 +84,11 @@ impl World {
             })
     }
 
-    pub(super) fn tier_dmg_mult(attacker_hq: u8, victim_hq: u8, is_hq_building: bool) -> f32 {
-        if attacker_hq > victim_hq {
-            let diff = attacker_hq - victim_hq;
-            if is_hq_building {
-                match diff {
-                    1 => 0.25,
-                    _ => 0.15,
-                }
-            } else {
-                match diff {
-                    1 => 0.50,
-                    _ => 0.30,
-                }
-            }
-        } else if attacker_hq < victim_hq {
-            let diff = victim_hq - attacker_hq;
-            match diff {
-                1 => 1.35,
-                _ => 1.75,
-            }
-        } else {
-            1.0
-        }
-    }
-
-    pub(super) fn tier_reward_mult(killer_hq: u8, victim_hq: u8) -> (f32, f32) {
-        if killer_hq > victim_hq {
-            let diff = killer_hq - victim_hq;
-            match diff {
-                1 => (0.50, 0.50),
-                _ => (0.20, 0.25),
-            }
-        } else if killer_hq < victim_hq {
-            let diff = victim_hq - killer_hq;
-            match diff {
-                1 => (1.45, 1.35),
-                _ => (1.90, 1.65),
-            }
-        } else {
-            (1.0, 1.0)
-        }
-    }
-
-    pub(super) fn grant_energy(&mut self, pid: PlayerId, amount: f32, cap_mult: f32, hq_lvl: u8) {
+    pub(super) fn grant_energy(&mut self, pid: PlayerId, amount: f32, cap_mult: f32) {
         if amount <= 0.0 {
             return;
         }
-        let max_e = self.energy_cap_for_hq(hq_lvl) * cap_mult;
+        let max_e = self.energy_cap_for_player(pid) * cap_mult;
         if let Some(p) = self.players.get_mut(&pid) {
             p.total_energy_earned += amount;
             if p.energy < max_e {
@@ -154,13 +97,12 @@ impl World {
         }
     }
 
-    pub(super) fn grant_trophies(&mut self, pid: PlayerId, amount: f32, hq_lvl: u8) {
+    pub(super) fn grant_trophies(&mut self, pid: PlayerId, amount: f32) {
         if amount <= 0.0 {
             return;
         }
-        let max_t = self.trophy_cap_for_hq(hq_lvl);
         if let Some(p) = self.players.get_mut(&pid) {
-            p.trophies = (p.trophies + amount).min(max_t);
+            p.trophies += amount;
         }
     }
 
@@ -178,77 +120,65 @@ impl World {
         Some((next.cost, next.trophy_cost))
     }
 
-    pub(super) fn step_ring_scoring(&mut self, dt: f32) {
-        self.ring_score_accum += dt;
-        if self.ring_score_accum < 1.0 {
-            return;
-        }
-        let whole_secs = self.ring_score_accum.floor() as u32;
-        self.ring_score_accum -= whole_secs as f32;
+    pub(super) fn step_base_regen(&mut self, dt: f32) {
+        let regen_pct = self.config.world.base_regen_hp_per_sec_pct;
+        let hq_mult = self.config.world.base_regen_hq_mult;
+        let energy_per_hp = self.config.world.base_regen_energy_per_hp.max(0.001);
 
-        let zones = &self.zones;
-        let players = &mut self.players;
-        for z in zones.values() {
-            let ring = Self::ring_for_radius((z.x * z.x + z.y * z.y).sqrt());
-            let pts = match ring {
-                2 => 1,
-                3 => 4,
-                _ => 0,
-            };
-            if pts > 0 {
-                if let Some(p) = players.get_mut(&z.player_id) {
-                    p.score += pts * whole_secs;
-                }
-            }
-        }
-    }
-
-    pub(super) fn step_ooc_regen(&mut self, dt: f32) {
-        const REPAIR_ENERGY_PER_HP: f32 = 0.09;
-        let mut regen_rates: Option<HashMap<PlayerId, f32>> = None;
+        let mut active_players: Option<Vec<PlayerId>> = None;
         for p in self.players.values_mut() {
-            if (p.survival_sec - p.last_damaged_sec) >= 6.0 {
+            if p.regen_enabled {
                 p.regen_accum += dt;
                 if p.regen_accum >= 0.5 {
                     p.regen_accum -= 0.5;
-                    regen_rates
-                        .get_or_insert_with(HashMap::new)
-                        .insert(p.id, 0.015);
+                    active_players.get_or_insert_with(Vec::new).push(p.id);
                 }
             } else {
                 p.regen_accum = 0.0;
             }
         }
-        let Some(regen_rates) = regen_rates else {
+        let Some(active_players) = active_players else {
             return;
         };
         for b in &mut self.buildings {
-            if b.hp > 0 && b.hp < b.max_hp {
-                if let Some(&rate) = regen_rates.get(&b.owner_id) {
-                    let Some(p) = self.players.get_mut(&b.owner_id) else {
-                        continue;
-                    };
-                    let eff_rate = if b.kind == 0 { rate * 0.35 } else { rate };
-                    let missing = b.max_hp.saturating_sub(b.hp);
-                    let want_heal = ((f32::from(b.max_hp) * eff_rate * 0.5).round().max(1.0) as u16)
-                        .min(missing);
-                    let affordable_hp = (p.energy / REPAIR_ENERGY_PER_HP).floor().max(0.0) as u16;
-                    let actual_heal = want_heal.min(affordable_hp);
-                    if actual_heal > 0 {
-                        p.energy = (p.energy - f32::from(actual_heal) * REPAIR_ENERGY_PER_HP).max(0.0);
-                        b.hp = b.hp.saturating_add(actual_heal).min(b.max_hp);
-                    }
+            if b.hp > 0 && b.hp < b.max_hp && active_players.contains(&b.owner_id) {
+                let Some(p) = self.players.get_mut(&b.owner_id) else {
+                    continue;
+                };
+                let eff_rate = if b.kind == 0 {
+                    regen_pct * hq_mult
+                } else {
+                    regen_pct
+                };
+                let missing = b.max_hp.saturating_sub(b.hp);
+                let want_heal = ((f32::from(b.max_hp) * eff_rate * 0.5).round().max(1.0) as u16)
+                    .min(missing);
+                let affordable_hp = (p.energy / energy_per_hp).floor().max(0.0) as u16;
+                let actual_heal = want_heal.min(affordable_hp);
+                if actual_heal > 0 {
+                    p.energy = (p.energy - f32::from(actual_heal) * energy_per_hp).max(0.0);
+                    b.hp = b.hp.saturating_add(actual_heal).min(b.max_hp);
                 }
             }
         }
     }
 
     pub(super) fn step_income_and_spawning(&mut self, dt: f32) {
-        // 1. Passive energy generation (clamped to HQ energy_cap)
+        // 1. Passive energy generation (clamped to HQ + generator tank cap)
         {
             let config = &self.config;
             let hq_cfg = config.building_by_kind(0);
             let gen_cfg = config.building_by_kind(1);
+            let mut gen_cap_bonus: HashMap<PlayerId, f32> = HashMap::new();
+            if let Some(gcfg) = gen_cfg {
+                for b in &self.buildings {
+                    if b.kind == 1 && b.hp > 0 {
+                        if let Some(lvl) = gcfg.levels.get(usize::from(b.level.saturating_sub(1))) {
+                            *gen_cap_bonus.entry(b.owner_id).or_insert(0.0) += lvl.energy_cap;
+                        }
+                    }
+                }
+            }
             let players = &mut self.players;
             let telemetry = &mut self.telemetry;
             for b in &self.buildings {
@@ -273,7 +203,7 @@ impl World {
                         .and_then(|c| c.levels.get(usize::from(hq_lvl.saturating_sub(1))))
                         .map(|l| l.energy_cap)
                         .unwrap_or(0.0);
-                    let max_e = if cfg_cap > 0.0 {
+                    let base_cap = if cfg_cap > 0.0 {
                         cfg_cap
                     } else {
                         match hq_lvl {
@@ -282,6 +212,7 @@ impl World {
                             _ => 2000.0,
                         }
                     };
+                    let max_e = base_cap + gen_cap_bonus.get(&b.owner_id).copied().unwrap_or(0.0);
                     p.total_energy_earned += amount;
                     if p.energy < max_e {
                         p.energy = (p.energy + amount).min(max_e);
@@ -310,7 +241,7 @@ impl World {
             let units = &self.units;
             let rng = &mut self.rng;
 
-            let mut supply_maps: Option<(HashMap<PlayerId, u16>, HashMap<EntityId, u16>)> = None;
+            let mut player_supply_opt: Option<HashMap<PlayerId, u16>> = None;
 
             for b in buildings.iter_mut() {
                 if b.kind != 3 || (b.meta & 0x01) != 0 {
@@ -328,11 +259,10 @@ impl World {
                     continue;
                 }
 
-                let (player_supply, barrack_supply) = supply_maps.get_or_insert_with(|| {
+                let player_supply = player_supply_opt.get_or_insert_with(|| {
                     let mut ps: HashMap<PlayerId, u16> = HashMap::new();
-                    let mut bs: HashMap<EntityId, u16> = HashMap::new();
                     for u in units.iter() {
-                        if u.owner_id != 0 && u.hp > 0 && u.kind != 4 {
+                        if u.owner_id != 0 && u.hp > 0 {
                             let sup = match u.kind {
                                 0 => raider.supply_cost,
                                 1 => archer.supply_cost,
@@ -343,10 +273,9 @@ impl World {
                                     .unwrap_or(1),
                             };
                             *ps.entry(u.owner_id).or_insert(0) += sup;
-                            *bs.entry(u.home_id).or_insert(0) += sup;
                         }
                     }
-                    (ps, bs)
+                    ps
                 });
 
                 let requested_type = (b.meta >> 2) & 0x07;
@@ -384,8 +313,6 @@ impl World {
                                 attack_cooldown_left: 0.0,
                                 last_hit_by: None,
                                 last_hit_src: SRC_UNKNOWN,
-                                rad_accum: 0.0,
-                                in_lower_ring_sec: 0.0,
                                 regen_accum: 0.0,
                                 home_id: b.id,
                                 knockback_vx: 0.0,
@@ -395,7 +322,6 @@ impl World {
                                 target_is_building: false,
                             });
                             *player_supply.entry(b.owner_id).or_insert(0) += u_sup;
-                            *barrack_supply.entry(b.id).or_insert(0) += u_sup;
                             p.energy -= u_cost;
                             b.cooldown_left = lvl.spawn_interval_sec * cd_mult;
                             continue;

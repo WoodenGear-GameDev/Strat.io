@@ -132,6 +132,21 @@ impl BalanceConfig {
             }
         }
     }
+
+    #[inline]
+    pub fn node_trophy_cost(&self, existing_nodes: i32) -> f32 {
+        let cfg = self.building_by_kind(5);
+        let base = cfg
+            .and_then(|c| c.levels.first())
+            .map(|l| l.trophy_cost)
+            .filter(|&v| v > 0.0)
+            .unwrap_or(90.0);
+        let mult = cfg
+            .map(|c| c.effects.node_cost_mult)
+            .filter(|&v| v > 0.0)
+            .unwrap_or(1.65);
+        (base * mult.powi(existing_nodes)).round()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,10 +158,18 @@ pub struct WorldConfig {
     pub zone_repulsion_strength: f32,
     pub sell_refund_ratio: f32,
     pub starting_energy: f32,
-    #[serde(default = "default_core_radius")]
-    pub core_radius: f32,
-    #[serde(default = "default_core_push")]
-    pub core_push_strength: f32,
+    #[serde(default = "default_ring3_radius")]
+    pub ring3_radius: f32,
+    #[serde(default = "default_ring2_radius")]
+    pub ring2_radius: f32,
+    #[serde(default = "default_gravity_pull")]
+    pub gravity_pull_strength: f32,
+    #[serde(default = "default_base_regen_pct")]
+    pub base_regen_hp_per_sec_pct: f32,
+    #[serde(default = "default_base_regen_hq_mult")]
+    pub base_regen_hq_mult: f32,
+    #[serde(default = "default_base_regen_energy_per_hp")]
+    pub base_regen_energy_per_hp: f32,
     #[serde(default = "default_tp_base")]
     pub teleport_base_cost: f32,
     #[serde(default = "default_tp_dist")]
@@ -155,27 +178,54 @@ pub struct WorldConfig {
     pub teleport_ring_penalty: f32,
     #[serde(default = "default_tp_cd")]
     pub teleport_cooldown_sec: f32,
+    #[serde(default = "default_tp_zone_clearance")]
+    pub teleport_zone_clearance: f32,
+    #[serde(default = "default_tp_node_clearance")]
+    pub teleport_node_clearance: f32,
+    #[serde(default = "default_hex_size")]
+    pub hex_size: f32,
     #[serde(default)]
     pub bot_count: usize,
 }
 
-fn default_core_radius() -> f32 {
-    260.0
+fn default_ring3_radius() -> f32 {
+    1050.0
 }
-fn default_core_push() -> f32 {
-    55.0
+fn default_ring2_radius() -> f32 {
+    2150.0
+}
+fn default_gravity_pull() -> f32 {
+    65.0
+}
+fn default_base_regen_pct() -> f32 {
+    0.04
+}
+fn default_base_regen_hq_mult() -> f32 {
+    0.4
+}
+fn default_base_regen_energy_per_hp() -> f32 {
+    0.09
 }
 fn default_tp_base() -> f32 {
-    120.0
+    150.0
 }
 fn default_tp_dist() -> f32 {
-    0.08
+    0.11
 }
 fn default_tp_ring() -> f32 {
-    0.18
+    0.30
 }
 fn default_tp_cd() -> f32 {
-    25.0
+    32.0
+}
+fn default_tp_zone_clearance() -> f32 {
+    150.0
+}
+fn default_tp_node_clearance() -> f32 {
+    120.0
+}
+fn default_hex_size() -> f32 {
+    34.0
 }
 
 
@@ -198,8 +248,6 @@ pub struct BuildingLevelConfig {
     pub trophy_cost: f32,
     #[serde(default)]
     pub energy_cap: f32,
-    #[serde(default)]
-    pub trophy_cap: f32,
     pub hp: u16,
     #[serde(default)]
     pub income_per_sec: f32,
@@ -216,8 +264,6 @@ pub struct BuildingLevelConfig {
     #[serde(default)]
     pub unit_cap_bonus: u16,
     #[serde(default)]
-    pub local_supply_cap: u16,
-    #[serde(default)]
     pub shot_cost: f32,
     #[serde(default)]
     pub splash_radius: f32,
@@ -225,12 +271,18 @@ pub struct BuildingLevelConfig {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BuildingEffectsConfig {
-    #[serde(default)]
-    pub aura_radius: f32,
-    #[serde(default)]
-    pub fire_rate_mult: f32,
-    #[serde(default)]
-    pub zone_radius_bonus: f32,
+    #[serde(default = "default_node_hex_radius")]
+    pub node_hex_radius: i32,
+    #[serde(default = "default_node_cost_mult")]
+    pub node_cost_mult: f32,
+}
+
+fn default_node_hex_radius() -> i32 {
+    2
+}
+
+fn default_node_cost_mult() -> f32 {
+    1.65
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

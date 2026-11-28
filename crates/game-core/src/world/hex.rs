@@ -5,8 +5,6 @@ use crate::types::PlayerId;
 
 use super::World;
 
-pub const RING1_RADIUS: f32 = 1100.0;
-pub const RING2_RADIUS: f32 = 2150.0;
 pub const HEX_SIZE: f32 = 34.0;
 pub type TriCoord = (i32, i32, u8);
 
@@ -25,7 +23,7 @@ const HEX_CORNERS: [(f32, f32); 6] = [
 ];
 
 pub fn is_large_building(kind: u8) -> bool {
-    kind == 0 || kind == 2 || kind == 3
+    kind == 0 || kind == 2 || kind == 3 || kind == 5
 }
 
 #[inline]
@@ -72,35 +70,60 @@ pub fn hex_vertex(q: i32, r: i32, i: u8) -> (f32, f32) {
 }
 
 pub fn collect_rhombuses(open_hexes: &HashSet<(i32, i32)>) -> Vec<([TriCoord; 2], (f32, f32))> {
-    let mut out = Vec::with_capacity(open_hexes.len() * 8);
+    let mut out = Vec::with_capacity(open_hexes.len() * 3);
     for &(q, r) in open_hexes {
         let (cx, cy) = hex_to_rel(q, r);
-        for s in 0..6_u8 {
-            let s_next = (s + 1) % 6;
+        for sector in 0..3_u8 {
+            let s = sector * 2;
+            let s_next = s + 1;
             let (ox1, oy1) = HEX_CORNERS[s_next as usize];
-            let vx1 = cx + ox1;
-            let vy1 = cy + oy1;
             out.push((
                 [(q, r, s), (q, r, s_next)],
                 (cx + ox1 * 0.5, cy + oy1 * 0.5),
             ));
-
-            let (dq, dr) = HEX_EDGE_DIRS[s as usize];
-            let nq = q + dq;
-            let nr = r + dr;
-            if open_hexes.contains(&(nq, nr)) && (q, r) < (nq, nr) {
-                let (ox0, oy0) = HEX_CORNERS[s as usize];
-                let vx0 = cx + ox0;
-                let vy0 = cy + oy0;
-                let s_opp = (s + 3) % 6;
-                out.push((
-                    [(q, r, s), (nq, nr, s_opp)],
-                    ((vx0 + vx1) * 0.5, (vy0 + vy1) * 0.5),
-                ));
-            }
         }
     }
     out
+}
+
+/// Returns `(hex_q, hex_r, occupied_triangles)` for a building at `(rel_x, rel_y)`.
+pub fn building_triangles(kind: u8, rel_x: f32, rel_y: f32) -> (i32, i32, Vec<TriCoord>) {
+    let (q, r) = rel_to_hex_round(rel_x, rel_y);
+    if is_large_building(kind) {
+        let tris = (0..6_u8).map(|s| (q, r, s)).collect();
+        (q, r, tris)
+    } else {
+        let (cx, cy) = hex_to_rel(q, r);
+        let mut best_sector = 0_u8;
+        let mut best_d2 = f32::INFINITY;
+        for sector in 0..3_u8 {
+            let s_next = sector * 2 + 1;
+            let (ox1, oy1) = HEX_CORNERS[s_next as usize];
+            let mx = cx + ox1 * 0.5;
+            let my = cy + oy1 * 0.5;
+            let dx = mx - rel_x;
+            let dy = my - rel_y;
+            let d2 = dx * dx + dy * dy;
+            if d2 < best_d2 {
+                best_d2 = d2;
+                best_sector = sector;
+            }
+        }
+        let s = best_sector * 2;
+        (q, r, vec![(q, r, s), (q, r, s + 1)])
+    }
+}
+
+/// Returns the 3 triangles sharing an edge with `(q, r, s)`:
+/// 2 internal neighbors in the same hex and 1 external neighbor across the hex edge.
+#[inline]
+pub fn tri_neighbors((q, r, s): TriCoord) -> [TriCoord; 3] {
+    let (dq, dr) = HEX_EDGE_DIRS[s as usize];
+    [
+        (q, r, (s + 1) % 6),
+        (q, r, (s + 5) % 6),
+        (q + dq, r + dr, (s + 3) % 6),
+    ]
 }
 
 pub fn core_hex_radius(level: u8) -> i32 {
@@ -134,22 +157,47 @@ pub fn hq_zone_radius(_base: f32, level: u8) -> f32 {
     }
 }
 
-pub fn beacon_ext_radius(level: u8) -> f32 {
-    match level {
-        0 | 1 => 68.0,
-        2 => 85.0,
-        _ => 105.0,
-    }
+pub fn beacon_ext_radius(_level: u8) -> f32 {
+    2.0 * HEX_SIZE * SQRT3
 }
 
 impl World {
-    pub(super) fn ring_for_radius(r: f32) -> u8 {
-        if r < RING1_RADIUS {
-            1
-        } else if r < RING2_RADIUS {
+    #[inline]
+    pub fn node_hex_radius(&self) -> i32 {
+        self.config
+            .building_by_kind(5)
+            .map(|c| c.effects.node_hex_radius)
+            .filter(|&r| r > 0)
+            .unwrap_or(2)
+    }
+
+    #[inline]
+    pub fn node_trophy_cost(&self, existing_nodes: i32) -> f32 {
+        self.config.node_trophy_cost(existing_nodes)
+    }
+
+    #[inline]
+    pub fn ring_for_radius_with(r: f32, ring3_r: f32, ring2_r: f32) -> u8 {
+        if r < ring3_r {
+            3
+        } else if r < ring2_r {
             2
         } else {
-            3
+            1
+        }
+    }
+
+    #[inline]
+    pub(super) fn ring_for_radius(&self, r: f32) -> u8 {
+        Self::ring_for_radius_with(r, self.config.world.ring3_radius, self.config.world.ring2_radius)
+    }
+
+    #[inline]
+    pub fn max_radius_for_hq(&self, hq_lvl: u8, zone_radius: f32) -> f32 {
+        match hq_lvl {
+            0 | 1 => (self.config.world.map_radius - zone_radius).max(0.0),
+            2 => (self.config.world.ring2_radius - zone_radius - 60.0).max(0.0),
+            _ => (self.config.world.ring3_radius - zone_radius - 60.0).max(0.0),
         }
     }
 
@@ -224,7 +272,7 @@ impl World {
         }
         const UNIT_VR2: f32 = 290.0 * 290.0;
         for u in &self.units {
-            if u.owner_id == player_id && u.hp > 0 && u.kind != 4 {
+            if u.owner_id == player_id && u.hp > 0 {
                 let dx = tx - u.x;
                 let dy = ty - u.y;
                 if dx * dx + dy * dy <= UNIT_VR2 {
@@ -235,13 +283,16 @@ impl World {
         false
     }
 
-    /// Discrete HQ-locked orbital ring radius: Ring 1 (620), Ring 2 (1580), Ring 3 (2600).
+    /// Equilibrium radius for inverted rings: Ring 1 (outer), Ring 2 (middle), Ring 3 (center).
     pub fn equilibrium_radius(&self, player_id: PlayerId) -> f32 {
         let hq_lvl = self.hq_level_of(player_id);
+        let ring3_r = self.config.world.ring3_radius;
+        let ring2_r = self.config.world.ring2_radius;
+        let map_r = self.config.world.map_radius;
         match hq_lvl {
-            0 | 1 => 620.0,
-            2 => 1580.0,
-            _ => 2600.0,
+            0 | 1 => (ring2_r + map_r) * 0.5,
+            2 => (ring3_r + ring2_r) * 0.5,
+            _ => ring3_r * 0.55,
         }
     }
 }

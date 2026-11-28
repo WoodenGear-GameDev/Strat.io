@@ -35,6 +35,7 @@ pub enum ClientMessage {
         building_id: u32,
         meta: u8,
     },
+    ToggleBaseRegen,
 }
 
 #[derive(Debug, Clone)]
@@ -54,7 +55,6 @@ pub struct SnapshotBuilding {
     pub owner_id: PlayerId,
     pub kind: u8,
     pub level: u8,
-    pub mutation: u8,
     pub meta: u8,
     pub rel_x: f32,
     pub rel_y: f32,
@@ -244,6 +244,7 @@ impl ClientMessage {
                 building_id: r.read_u32()?,
                 meta: r.read_u8()?,
             }),
+            0x0B => Ok(Self::ToggleBaseRegen),
             other => Err(ProtocolError::UnknownOpcode(other)),
         }
     }
@@ -251,7 +252,7 @@ impl ClientMessage {
 
 pub const SNAPSHOT_HEADER_BYTES: usize = 26;
 pub const SNAPSHOT_ZONE_BYTES: usize = 20;
-pub const SNAPSHOT_BUILDING_BYTES: usize = 25;
+pub const SNAPSHOT_BUILDING_BYTES: usize = 24;
 pub const SNAPSHOT_UNIT_BYTES: usize = 22;
 pub const SNAPSHOT_PROJECTILE_BYTES: usize = 17;
 
@@ -365,7 +366,6 @@ impl ServerMessage {
                     out.extend_from_slice(&b.owner_id.to_le_bytes());
                     out.push(b.kind);
                     out.push(b.level);
-                    out.push(b.mutation);
                     out.push(b.meta);
                     out.extend_from_slice(&b.rel_x.to_le_bytes());
                     out.extend_from_slice(&b.rel_y.to_le_bytes());

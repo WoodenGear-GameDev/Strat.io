@@ -53,22 +53,22 @@ export function drawMinimap(
   ctx.fill();
   ctx.stroke();
 
-  // Core on minimap
-  const coreR = (state.balance.world.core_radius ?? 280) * scale;
-  ctx.fillStyle = "rgba(168, 199, 250, 0.30)";
+  // Inverted rings on minimap: Ring 3 dense center, Ring 2 middle, Ring 1 outer
+  const ring3R = state.balance.world.ring3_radius * scale;
+  const ring2R = state.balance.world.ring2_radius * scale;
+  ctx.fillStyle = "rgba(186, 165, 224, 0.12)";
   ctx.beginPath();
-  ctx.arc(cx, cy, Math.max(3, coreR), 0, Math.PI * 2);
+  ctx.arc(cx, cy, ring3R, 0, Math.PI * 2);
   ctx.fill();
 
-  // Ring 1 & 2 on minimap
-  ctx.strokeStyle = "rgba(168, 199, 250, 0.22)";
+  ctx.strokeStyle = "rgba(186, 165, 224, 0.30)";
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.arc(cx, cy, 1100 * scale, 0, Math.PI * 2);
+  ctx.arc(cx, cy, ring3R, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.strokeStyle = "rgba(186, 165, 224, 0.24)";
+  ctx.strokeStyle = "rgba(168, 199, 250, 0.22)";
   ctx.beginPath();
-  ctx.arc(cx, cy, 2150 * scale, 0, Math.PI * 2);
+  ctx.arc(cx, cy, ring2R, 0, Math.PI * 2);
   ctx.stroke();
 
   // Heat zones of major combat (delayed slightly)

@@ -1,73 +1,14 @@
-use std::collections::HashSet;
-use std::f32::consts::TAU;
+use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::types::{EntityId, PlayerId};
+use crate::types::{Building, EntityId, PlayerId};
 
 use super::hex::{
-    beacon_ext_radius, collect_rhombuses, core_hex_radius, hex_to_rel, insert_hex_disk,
-    is_large_building, rel_to_hex_round, TriCoord, HEX_EDGE_DIRS, HEX_SIZE,
+    building_triangles, collect_rhombuses, core_hex_radius, hex_to_rel, insert_hex_disk,
+    is_large_building, rel_to_hex_round, tri_neighbors, TriCoord,
 };
 use super::{BaseGridCache, World};
 
 impl World {
-    pub(super) fn find_safe_orbit_spot(
-        &self,
-        player_id: PlayerId,
-        target_r: f32,
-        zone_r: f32,
-        cur_angle: f32,
-    ) -> (f32, f32) {
-        let mut best_x = cur_angle.cos() * target_r;
-        let mut best_y = cur_angle.sin() * target_r;
-        let mut best_clear = f32::NEG_INFINITY;
-        let steps = 24_i32;
-        for step in 0..steps {
-            let signed = if step == 0 {
-                0
-            } else if step % 2 == 1 {
-                (step + 1) / 2
-            } else {
-                -(step / 2)
-            };
-            let ang = cur_angle + (signed as f32) * (TAU / steps as f32);
-            let cx = ang.cos() * target_r;
-            let cy = ang.sin() * target_r;
-            let mut min_clear = f32::MAX;
-            for other in self.zones.values() {
-                if other.player_id == player_id {
-                    continue;
-                }
-                let dx = cx - other.x;
-                let dy = cy - other.y;
-                let clear = (dx * dx + dy * dy).sqrt() - (zone_r + other.radius);
-                if clear < min_clear {
-                    min_clear = clear;
-                }
-            }
-            for b in &self.buildings {
-                if b.owner_id != player_id && b.kind == 5 {
-                    if let Some(other) = self.zones.get(&b.owner_id) {
-                        let ext_r = beacon_ext_radius(b.level);
-                        let dx = cx - (other.x + b.rel_x);
-                        let dy = cy - (other.y + b.rel_y);
-                        let clear = (dx * dx + dy * dy).sqrt() - (zone_r + ext_r);
-                        if clear < min_clear {
-                            min_clear = clear;
-                        }
-                    }
-                }
-            }
-            if min_clear > best_clear {
-                best_clear = min_clear;
-                best_x = cx;
-                best_y = cy;
-                if best_clear >= 220.0 {
-                    break;
-                }
-            }
-        }
-        (best_x, best_y)
-    }
 
     pub(super) fn collect_player_open_large_hexes(&self, player_id: PlayerId) -> HashSet<(i32, i32)> {
         let mut open = HashSet::new();
@@ -75,64 +16,26 @@ impl World {
         insert_hex_disk(0, 0, core_hex_radius(hq_lvl), &mut open);
 
         if hq_lvl >= 3 {
+            let node_r = self.node_hex_radius();
             for b in &self.buildings {
-                if b.owner_id == player_id && b.kind == 5 {
-                    let rad = beacon_ext_radius(b.level);
-                    let rad2 = rad * rad;
-                    let hex_span = ((rad / (HEX_SIZE * 1.5)).ceil() as i32) + 1;
+                if b.owner_id == player_id && b.kind == 5 && b.hp > 0 {
                     let (cq, cr) = rel_to_hex_round(b.rel_x, b.rel_y);
-                    for dq in -hex_span..=hex_span {
-                        for dr in -hex_span..=hex_span {
-                            let lq = cq + dq;
-                            let lr = cr + dr;
-                            let (lx, ly) = hex_to_rel(lq, lr);
-                            let dx = lx - b.rel_x;
-                            let dy = ly - b.rel_y;
-                            if dx * dx + dy * dy <= rad2 {
-                                open.insert((lq, lr));
-                            }
-                        }
-                    }
+                    insert_hex_disk(cq, cr, node_r, &mut open);
                 }
             }
         }
         open
     }
 
-    pub(super) fn collect_player_occupied_tris(
-        &self,
-        player_id: PlayerId,
-        rhombuses: &[([TriCoord; 2], (f32, f32))],
-    ) -> HashSet<TriCoord> {
+    pub(super) fn collect_player_occupied_tris(&self, player_id: PlayerId) -> HashSet<TriCoord> {
         let mut occupied = HashSet::new();
         for b in &self.buildings {
-            if b.owner_id != player_id {
+            if b.owner_id != player_id || b.hp == 0 {
                 continue;
             }
-            if is_large_building(b.kind) {
-                let (aq, ar) = rel_to_hex_round(b.rel_x, b.rel_y);
-                for s in 0..6_u8 {
-                    occupied.insert((aq, ar, s));
-                }
-            } else {
-                let mut best_d2 = f32::INFINITY;
-                let mut best_tris: Option<[TriCoord; 2]> = None;
-                for &(tris, (ax, ay)) in rhombuses {
-                    let dx = ax - b.rel_x;
-                    let dy = ay - b.rel_y;
-                    let d2 = dx * dx + dy * dy;
-                    if d2 < best_d2 {
-                        best_d2 = d2;
-                        best_tris = Some(tris);
-                        if d2 < 4.0 {
-                            break;
-                        }
-                    }
-                }
-                if let Some(tris) = best_tris {
-                    occupied.insert(tris[0]);
-                    occupied.insert(tris[1]);
-                }
+            let (_, _, tris) = building_triangles(b.kind, b.rel_x, b.rel_y);
+            for t in tris {
+                occupied.insert(t);
             }
         }
         occupied
@@ -142,17 +45,30 @@ impl World {
         if !self.base_grid_cache.contains_key(&player_id) {
             let open_hexes = self.collect_player_open_large_hexes(player_id);
             let rhombuses = collect_rhombuses(&open_hexes);
-            let occupied_tris = self.collect_player_occupied_tris(player_id, &rhombuses);
+            let occupied_tris = self.collect_player_occupied_tris(player_id);
             let free_hexes: Vec<(i32, i32)> = open_hexes
                 .iter()
                 .copied()
-                .filter(|&(q, r)| !(0..6_u8).any(|s| occupied_tris.contains(&(q, r, s))))
+                .filter(|&(q, r)| {
+                    !(0..6_u8).any(|s| occupied_tris.contains(&(q, r, s)))
+                        && (0..6_u8).any(|s| {
+                            tri_neighbors((q, r, s))
+                                .iter()
+                                .any(|n| occupied_tris.contains(n))
+                        })
+                })
                 .collect();
             let free_rhombuses: Vec<([TriCoord; 2], (f32, f32))> = rhombuses
                 .iter()
                 .copied()
                 .filter(|&(tris, _)| {
-                    !occupied_tris.contains(&tris[0]) && !occupied_tris.contains(&tris[1])
+                    !occupied_tris.contains(&tris[0])
+                        && !occupied_tris.contains(&tris[1])
+                        && tris.iter().any(|&t| {
+                            tri_neighbors(t)
+                                .iter()
+                                .any(|n| occupied_tris.contains(n))
+                        })
                 })
                 .collect();
             self.base_grid_cache.insert(
@@ -210,58 +126,122 @@ impl World {
         best
     }
 
-    pub(super) fn prune_orphaned_buildings(&mut self, player_id: PlayerId) {
+    /// Iterative fixed-point BFS over built buildings via shared triangle edges to HQ `(0,0)`
+    /// combined with support-field check (HQ disk or any living Node's hex disk).
+    /// Returns all detached buildings that were removed.
+    pub(super) fn prune_orphaned_buildings(&mut self, player_id: PlayerId) -> Vec<Building> {
         if !self.zones.contains_key(&player_id) {
-            return;
+            return Vec::new();
         }
-        let open_hexes = self.collect_player_open_large_hexes(player_id);
-        let mut reachable: HashSet<(i32, i32)> = HashSet::new();
-        let mut queue: Vec<(i32, i32)> = Vec::new();
-        if open_hexes.contains(&(0, 0)) {
-            reachable.insert((0, 0));
-            queue.push((0, 0));
+        let hq_lvl = self.hq_level_of(player_id);
+        let core_r = core_hex_radius(hq_lvl);
+        let node_r = self.node_hex_radius();
+
+        struct NodeInfo {
+            id: EntityId,
+            kind: u8,
+            hex: (i32, i32),
+            tris: Vec<TriCoord>,
         }
 
-        let mut head = 0;
-        while head < queue.len() {
-            let (cq, cr) = queue[head];
-            head += 1;
-            for (dq, dr) in HEX_EDGE_DIRS {
-                let next = (cq + dq, cr + dr);
-                if open_hexes.contains(&next) && reachable.insert(next) {
-                    queue.push(next);
+        let mut nodes: Vec<NodeInfo> = Vec::new();
+        let mut hq_local_idx: Option<usize> = None;
+        for b in &self.buildings {
+            if b.owner_id != player_id || b.hp == 0 {
+                continue;
+            }
+            let (q, r, tris) = building_triangles(b.kind, b.rel_x, b.rel_y);
+            let local_idx = nodes.len();
+            if b.kind == 0 {
+                hq_local_idx = Some(local_idx);
+            }
+            nodes.push(NodeInfo {
+                id: b.id,
+                kind: b.kind,
+                hex: (q, r),
+                tris,
+            });
+        }
+
+        let Some(hq_idx) = hq_local_idx else {
+            return Vec::new();
+        };
+
+        let mut tri_to_node: HashMap<TriCoord, usize> = HashMap::with_capacity(nodes.len() * 4);
+        for (i, n) in nodes.iter().enumerate() {
+            for &t in &n.tris {
+                tri_to_node.insert(t, i);
+            }
+        }
+
+        let mut alive = vec![true; nodes.len()];
+        let mut supported_hexes: HashSet<(i32, i32)> = HashSet::new();
+        let mut queue: VecDeque<usize> = VecDeque::new();
+
+        loop {
+            supported_hexes.clear();
+            insert_hex_disk(0, 0, core_r, &mut supported_hexes);
+            if hq_lvl >= 3 {
+                for (i, n) in nodes.iter().enumerate() {
+                    if alive[i] && n.kind == 5 {
+                        insert_hex_disk(n.hex.0, n.hex.1, node_r, &mut supported_hexes);
+                    }
+                }
+            }
+
+            let mut visited = vec![false; nodes.len()];
+            queue.clear();
+            visited[hq_idx] = true;
+            queue.push_back(hq_idx);
+
+            while let Some(u) = queue.pop_front() {
+                for &t in &nodes[u].tris {
+                    for nt in tri_neighbors(t) {
+                        if let Some(&v) = tri_to_node.get(&nt) {
+                            if alive[v] && !visited[v] && supported_hexes.contains(&nodes[v].hex) {
+                                visited[v] = true;
+                                queue.push_back(v);
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut changed = false;
+            for i in 0..nodes.len() {
+                if alive[i] && !visited[i] {
+                    alive[i] = false;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        let dead_ids: HashSet<EntityId> = nodes
+            .iter()
+            .enumerate()
+            .filter(|&(i, n)| !alive[i] && n.kind != 0)
+            .map(|(_, n)| n.id)
+            .collect();
+
+        let mut detached = Vec::new();
+        if !dead_ids.is_empty() {
+            let mut i = 0;
+            while i < self.buildings.len() {
+                if self.buildings[i].owner_id == player_id
+                    && dead_ids.contains(&self.buildings[i].id)
+                {
+                    detached.push(self.buildings.swap_remove(i));
+                } else {
+                    i += 1;
                 }
             }
         }
 
-        let valid_rhombuses = collect_rhombuses(&reachable);
-        let mut removed_station_ids: HashSet<EntityId> = HashSet::new();
-        self.buildings.retain(|b| {
-            if b.owner_id != player_id || b.kind == 0 {
-                return true;
-            }
-            let keep = if is_large_building(b.kind) {
-                let (aq, ar) = rel_to_hex_round(b.rel_x, b.rel_y);
-                reachable.contains(&(aq, ar))
-            } else {
-                valid_rhombuses.iter().any(|&(_, (mx, my))| {
-                    let dx = mx - b.rel_x;
-                    let dy = my - b.rel_y;
-                    dx * dx + dy * dy <= 36.0
-                })
-            };
-            if !keep && b.kind == 1 {
-                removed_station_ids.insert(b.id);
-            }
-            keep
-        });
-
-        if !removed_station_ids.is_empty() {
-            self.units
-                .retain(|u| !(u.kind == 4 && removed_station_ids.contains(&u.home_id)));
-        }
-
         self.recompute_unit_cap(player_id);
         self.invalidate_base_grid(player_id);
+        detached
     }
 }

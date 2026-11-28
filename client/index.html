@@ -81,55 +81,25 @@
 
     <!-- In-Game HUD -->
     <div id="hud-overlay" class="hud hidden">
-      <!-- Top-Left: Energy, Level + XP Progress, Army -->
-      <div class="hud-top-left panel hud-vitals">
-        <div class="vitals-row">
-          <div class="metric-chip energy-chip" title="Энергия">
-            <span class="metric-icon energy-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M13 2L4.5 13.5H11L10 22l9.5-11.5H13L13 2z" fill="currentColor" /></svg>
-            </span>
-            <div class="metric-body">
-              <span class="metric-label">Энергия</span>
-              <strong id="hud-energy" class="metric-value">0</strong>
-            </div>
-          </div>
-
-          <div class="metric-chip trophy-chip" title="Трофеи (добываются в бою — нужны для Ядра)">
-            <span class="metric-icon trophy-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24">
-                <path d="M14.5 4l5.5 5.5-8.5 8.5L6 12.5 14.5 4zM6 12.5L4 20l7.5-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-              </svg>
-            </span>
-            <div class="metric-body">
-              <span class="metric-label">Трофеи</span>
-              <strong id="hud-trophies" class="metric-value">0</strong>
-            </div>
-          </div>
-
-          <div class="metric-chip army-chip" title="Армия">
-            <span class="metric-icon army-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24">
-                <circle cx="9" cy="8.5" r="3" fill="none" stroke="currentColor" stroke-width="2" />
-                <circle cx="16.5" cy="9.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8" />
-                <path d="M3.5 19a5.5 5.5 0 0 1 11 0M14.5 19a4 4 0 0 1 6 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-              </svg>
-            </span>
-            <div class="metric-body">
-              <span class="metric-label">Армия</span>
-              <strong id="hud-units" class="metric-value">0 / 0</strong>
-            </div>
-          </div>
+      <!-- Top-Left: Minimal Vertical Stack -->
+      <div class="hud-top-left panel hud-strip">
+        <div class="strip-item strip-energy" title="Энергия и скорость восполнения">
+          <svg class="strip-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4.5 13.5H11L10 22l9.5-11.5H13L13 2z" fill="currentColor" /></svg>
+          <strong id="hud-energy">0</strong>
+          <span id="hud-energy-rate" class="strip-rate">+0/с</span>
         </div>
-
-        <div class="hq-status-row">
-          <button id="hud-hq-btn" class="lvl-pill hq-lvl-btn" title="Выбрать / улучшить Ядро">
-            <svg viewBox="0 0 24 24" class="icon-xs" aria-hidden="true">
-              <polygon points="12,3 20,7.5 20,16.5 12,21 4,16.5 4,7.5" fill="currentColor" />
-            </svg>
-            <span>Ядро Ур. <strong id="hud-hq-level">1</strong></span>
-            <span id="hud-hq-ready" class="hq-ready-tag hidden">⬆ Ур.</span>
-          </button>
+        <div class="strip-item trophy-chip" title="Эссенция (в Ядре)">
+          <svg class="strip-ico" viewBox="0 0 24 24" aria-hidden="true"><polygon points="12,3 20,12 12,21 4,12" fill="none" stroke="currentColor" stroke-width="2" /></svg>
+          <strong id="hud-trophies">0</strong>
         </div>
+        <div class="strip-item strip-army" title="Дроны / Лимит">
+          <svg class="strip-ico" viewBox="0 0 24 24" aria-hidden="true"><polygon points="12,4 20,19 12,15 4,19" fill="currentColor" /></svg>
+          <strong id="hud-units">0 / 0</strong>
+        </div>
+        <button id="hud-hq-btn" class="strip-hq-btn hq-lvl-btn" title="Ядро (клик — выбрать / улучшить)">
+          <svg class="strip-ico" viewBox="0 0 24 24" aria-hidden="true"><polygon points="12,3 20,7.5 20,16.5 12,21 4,16.5 4,7.5" fill="currentColor" /></svg>
+          <span>Ядро <strong id="hud-hq-level">1</strong></span>
+        </button>
       </div>
 
       <!-- Top-Right: Compact Match Top + Debug Pill Toggle -->
@@ -199,6 +169,9 @@
           </div>
           <span id="bcard-hp-text" class="bcard-hp-text"></span>
         </div>
+        <div id="bcard-hq" class="bcard-hq hidden">
+          <button id="bcard-hq-regen" class="action-btn hq-regen-btn">Реген базы: ВЫКЛ</button>
+        </div>
         <div id="bcard-barracks" class="bcard-barracks hidden">
           <button id="bcard-barracks-pause" class="action-btn barracks-pause-btn">⏸ Пауза</button>
           <div class="barracks-units-row">
@@ -260,16 +233,6 @@
             <small class="tool-cost"><span id="cost-3">—</span></small>
           </button>
 
-          <button class="tool-btn build-btn" data-kind="5" title="Маяк [4]">
-            <span class="hotkey">4</span>
-            <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
-              <polygon points="12,4.5 19.5,18.5 4.5,18.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-              <circle cx="12" cy="14" r="2" fill="currentColor" />
-            </svg>
-            <span class="tool-name">Маяк</span>
-            <small class="tool-cost"><span id="cost-5">—</span></small>
-          </button>
-
           <button id="btn-action-upgrade" class="tool-btn cmd-btn action-upgrade-btn" title="Улучшение по клику [U]">
             <span class="hotkey">U</span>
             <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
@@ -305,25 +268,6 @@
               <path d="M12 3v3M12 18v3M3 12h3M18 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
             </svg>
             <span id="cam-anchor-label" class="tool-name">Ядро</span>
-          </button>
-
-          <button id="btn-zoom-in" class="tool-btn cam-btn icon-only-tool" title="Приблизить">
-            <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 6v12M6 12h12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
-            </svg>
-          </button>
-
-          <button id="btn-zoom-out" class="tool-btn cam-btn icon-only-tool" title="Отдалить">
-            <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 12h12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
-            </svg>
-          </button>
-
-          <button id="btn-cancel" class="tool-btn danger-tonal cancel-btn" disabled title="Отмена [Esc]">
-            <svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
-            </svg>
-            <span class="tool-name">Отмена</span>
           </button>
         </div>
       </div>
